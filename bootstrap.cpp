@@ -1,0 +1,242 @@
+#include "bootstrap.hpp"
+
+#include <cstdlib>
+
+using index_t = int32_t;
+using scalar_t = rat_t;
+
+enum class bootstrap_mode_t {
+	none,
+	extend,
+	sew,
+	induce
+};
+
+struct args_t {
+	bootstrap_mode_t mode = bootstrap_mode_t::none;
+	std::filesystem::path condition;
+	std::filesystem::path first;
+	std::filesystem::path last;
+	std::filesystem::path transform;
+	std::filesystem::path output;
+};
+
+// bootstrap.cpp owns only the command-line contract and WXF I/O.
+// The algebraic steps are kept in bootstrap.hpp so this file stays close to a dispatcher.
+void print_usage(const char* program) {
+	std::cerr << "Usage:" << std::endl;
+	std::cerr << "  " << program << " --extend -c <condition.wxf> -f <FEC_in.wxf> -o <FEC_out.wxf>" << std::endl;
+	std::cerr << "  " << program << " --extend -c <condition.wxf> -l <LEC_in.wxf> -o <LEC_out.wxf>" << std::endl;
+	std::cerr << "  " << program << " --sew -c <condition.wxf> -f <FEC.wxf> -l <LEC.wxf> -o <SEW.wxf>" << std::endl;
+}
+
+std::string take_value(int& i, int argc, char* argv[], const std::string& flag) {
+	if (i + 1 >= argc) {
+		throw std::runtime_error("Missing value after " + flag);
+	}
+	i++;
+	return argv[i];
+}
+
+void set_mode(args_t& args, bootstrap_mode_t mode) {
+	if (args.mode != bootstrap_mode_t::none) {
+		throw std::runtime_error("Only one mode can be specified.");
+	}
+	args.mode = mode;
+}
+
+args_t parse_args(int argc, char* argv[]) {
+	args_t args;
+	for (int i = 1; i < argc; i++) {
+		std::string arg = argv[i];
+		if (arg == "--extend") {
+			set_mode(args, bootstrap_mode_t::extend);
+		}
+		else if (arg == "--sew") {
+			set_mode(args, bootstrap_mode_t::sew);
+		}
+		else if (arg == "--induce") {
+			set_mode(args, bootstrap_mode_t::induce);
+		}
+		else if (arg == "-c" || arg == "--condition") {
+			args.condition = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "-f" || arg == "--first") {
+			args.first = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "-l" || arg == "--last") {
+			args.last = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "-t" || arg == "--transform") {
+			args.transform = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "-o" || arg == "--output") {
+			args.output = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "-h" || arg == "--help") {
+			print_usage(argv[0]);
+			std::exit(0);
+		}
+		else {
+			throw std::runtime_error("Unknown argument: " + arg);
+		}
+	}
+	return args;
+}
+
+void validate_args(const args_t& args) {
+	if (args.mode == bootstrap_mode_t::none) {
+		throw std::runtime_error("Missing mode: use --extend, --sew, or --induce.");
+	}
+	if (args.mode == bootstrap_mode_t::induce) {
+		throw std::runtime_error("--induce is reserved for a future workflow stage.");
+	}
+	if (args.condition.empty()) {
+		throw std::runtime_error("Missing condition file: use -c/--condition.");
+	}
+	if (args.output.empty()) {
+		throw std::runtime_error("Missing output file: use -o/--output.");
+	}
+	if (args.mode == bootstrap_mode_t::extend) {
+		const bool has_first = !args.first.empty();
+		const bool has_last = !args.last.empty();
+		if (has_first == has_last) {
+			throw std::runtime_error("--extend requires exactly one of -f/--first or -l/--last.");
+		}
+	}
+	if (args.mode == bootstrap_mode_t::sew) {
+		if (args.first.empty() || args.last.empty()) {
+			throw std::runtime_error("--sew requires both -f/--first and -l/--last.");
+		}
+	}
+	if (!args.transform.empty()) {
+		throw std::runtime_error("-t/--transform is only valid for the future --induce mode.");
+	}
+}
+
+// Relative paths are resolved against the executable directory. This keeps
+// "symbology/bootstrap.exe -c data/..." working from the repository root.
+std::filesystem::path resolve_path(const std::filesystem::path& base, const std::filesystem::path& path) {
+	if (path.is_absolute()) {
+		return path;
+	}
+	return base / path;
+}
+
+void print_crc32(const std::string& label, const std::filesystem::path& path) {
+	auto crc = get_file_crc32(path);
+	std::cout << "CRC32 of " << label << " : " << std::hex << crc << std::dec << std::endl;
+}
+
+// Files are read as CSR tensors and moved into bootstrap.hpp, where each
+// computation converts to COO only for the operations that need it.
+sparse_tensor<scalar_t, index_t, SPARSE_CSR> read_tensor(
+	const std::filesystem::path& path,
+	const field_t& F,
+	thread_pool* pool) {
+	std::cout << "Reading file " << path.string() << " ..." << std::endl;
+	auto tensor = sparse_tensor_read_wxf<scalar_t, index_t>(path, F, pool);
+	print_crc32(path.string(), path);
+	return tensor;
+}
+
+// SparseRREF emits its native WXF representation here. Use wxf_roundtrip.wls
+// when byte-for-byte Mathematica-exported WXF is needed for archive comparison.
+void write_tensor(
+	const std::filesystem::path& path,
+	sparse_tensor<scalar_t, index_t, SPARSE_CSR>&& tensor) {
+	if (!path.parent_path().empty()) {
+		std::filesystem::create_directories(path.parent_path());
+	}
+	std::cout << "Writing file " << path.string() << " ..." << std::endl;
+	Timer timer;
+	timer.start();
+	auto u8arr = sparse_tensor_write_wxf(tensor);
+	std::ofstream ofs(path, std::ios::binary);
+	if (!ofs) {
+		throw std::runtime_error("Cannot write file: " + path.string());
+	}
+	ofs.write(reinterpret_cast<const char*>(u8arr.data()), u8arr.size());
+	ofs.close();
+	u8arr.clear();
+	u8arr.shrink_to_fit();
+	timer.stop();
+	std::cout << "** Write time: " << timer.milliseconds() << " ms" << std::endl;
+	print_crc32(path.string(), path);
+}
+
+int main(int argc, char* argv[]) {
+	try {
+		field_t F(FIELD_QQ);
+
+		args_t args = parse_args(argc, argv);
+		validate_args(args);
+
+		// reset() asks SparseRREF to choose the thread count at runtime.
+		rref_option_t opt;
+		opt->method = 0;
+		opt->verbose = true;
+		opt->pool.reset();
+		thread_pool* pool = &(opt->pool);
+
+		std::filesystem::path base = std::filesystem::path(argv[0]).parent_path();
+		if (base.empty()) {
+			base = std::filesystem::current_path();
+		}
+
+		std::filesystem::path condition_path = resolve_path(base, args.condition);
+		std::filesystem::path first_path = resolve_path(base, args.first);
+		std::filesystem::path last_path = resolve_path(base, args.last);
+		std::filesystem::path output_path = resolve_path(base, args.output);
+
+		std::cout << "threads: " << pool->get_thread_count() << std::endl;
+		auto local_time = std::chrono::zoned_time{
+			std::chrono::current_zone(),
+			std::chrono::system_clock::now()
+		};
+		std::cout << "Task begin at: " << std::format("{:%Y-%m-%d %H:%M:%S %z}", local_time) << std::endl;
+
+		Timer total_timer;
+		total_timer.start();
+		auto dlogmat = read_tensor(condition_path, F, pool);
+
+		// Each mode consumes dlogmat exactly once, matching the moved-tensor API
+		// in bootstrap.hpp and avoiding accidental large tensor copies.
+		if (args.mode == bootstrap_mode_t::extend && !args.first.empty()) {
+			std::cout << "Symbol bootstrap: " << first_path.string() << " -> " << output_path.string()
+					  << " @ " << condition_path.string() << std::endl;
+			auto FEC = read_tensor(first_path, F, pool);
+			auto output = extend_forward(std::move(dlogmat), std::move(FEC), F, opt);
+			write_tensor(output_path, std::move(output));
+		}
+		else if (args.mode == bootstrap_mode_t::extend && !args.last.empty()) {
+			std::cout << "Symbol bootstrap: " << last_path.string() << " -> " << output_path.string()
+					  << " @ " << condition_path.string() << std::endl;
+			auto LEC = read_tensor(last_path, F, pool);
+			auto output = extend_backward(std::move(dlogmat), std::move(LEC), F, opt);
+			write_tensor(output_path, std::move(output));
+		}
+		else if (args.mode == bootstrap_mode_t::sew) {
+			std::cout << "Symbol bootstrap: " << first_path.string() << " + " << last_path.string()
+					  << " -> " << output_path.string() << " @ " << condition_path.string() << std::endl;
+			auto FEC = read_tensor(first_path, F, pool);
+			auto LEC = read_tensor(last_path, F, pool);
+			auto output = sew_first_last(std::move(dlogmat), std::move(FEC), std::move(LEC), F, opt);
+			write_tensor(output_path, std::move(output));
+		}
+
+		total_timer.stop();
+		local_time = std::chrono::zoned_time{
+			std::chrono::current_zone(),
+			std::chrono::system_clock::now()
+		};
+		std::cout << "Task end at: " << std::format("{:%Y-%m-%d %H:%M:%S %z}", local_time) << std::endl;
+		std::cout << "Done in " << total_timer.milliseconds() << " ms" << std::endl << std::endl;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Error: " << e.what() << std::endl;
+		print_usage(argv[0]);
+		return 1;
+	}
+	return 0;
+}

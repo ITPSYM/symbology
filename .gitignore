@@ -38,19 +38,12 @@
 *.exe
 *.out
 *.app
+bootstrap
 
 # Build directories
 build/
 Build/
 build-*/
-
-# CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-install_manifest.txt
-compile_commands.json
 
 # Temporary files
 *.tmp
@@ -67,3 +60,10 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+output/
+logs/
+temp/
+tmp/
+
+# SparseRREF
+SparseRREF/
