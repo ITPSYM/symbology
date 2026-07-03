@@ -27,34 +27,46 @@ git clone https://github.com/munuxi/SparseRREF.git
 
 ### macOS
 
-If you use Homebrew and the Apple command-line tools:
+#### Why Homebrew GCC is required
+
+`bootstrap` uses `std::chrono::zoned_time` (for timestamps) and `SparseRREF` uses `std::execution::par` (parallel algorithms) unconditionally. On macOS **every clang toolchain ships libc++**, and libc++ gates both of these behind build-time feature flags that no available distribution enables — Apple clang, Homebrew clang, and conda-forge clang all fail with `no member named 'par' in namespace 'std::execution'` and `no member named 'zoned_time' in namespace 'std::chrono'`. The `-D_LIBCPP_HAS_PARALLEL_ALGORITHMS` macro does not help (it is decided when libc++ itself is compiled, not at use-site). Conda-forge `gxx` on macOS is also a clang wrapper driving libc++, so it has the same problem.
+
+The reliable route is **Homebrew GCC** (`g++-14`), which brings its own libstdc++ where `std::execution::par` and `zoned_time` are available unconditionally.
+
+#### Setup
+
+Install the libraries and Homebrew GCC:
 
 ```bash
 xcode-select --install
-brew install flint gmp tbb mimalloc
+brew install flint gmp tbb mimalloc gcc
 ```
 
-Then build with:
+Then build with `g++-14` (note: this bypasses the default `make` rule, which uses the system `g++`/`clang++`):
 
 ```bash
-make
+make CXX=g++-14
 ```
 
-On some macOS systems the system compiler or libc++ is too old for the C++20 features used here or for the latest `SparseRREF`. In that case, the most reproducible route is a conda-forge compiler environment:
+If `g++-14` is not on `PATH`, point at it explicitly, for example:
 
 ```bash
-micromamba create -n symbology -c conda-forge cxx-compiler make libflint gmp tbb mimalloc git
-micromamba activate symbology
-make CXX="$CXX"
+make CXX=/opt/homebrew/bin/g++-14
 ```
 
-If your compiler finds the wrong headers or libraries, pass the include and library paths explicitly, for example:
+#### If `g++-14` cannot find the libraries
+
+Pass the Homebrew include and library paths explicitly:
 
 ```bash
-make CXX="$CXX" \
-  CXXFLAGS="-O3 -std=c++20 -I. -I$CONDA_PREFIX/include" \
-  LDLIBS="-L$CONDA_PREFIX/lib -Wl,-rpath,$CONDA_PREFIX/lib -lflint -lgmp -lmimalloc -ltbb"
+make CXX=g++-14 \
+  CXXFLAGS="-O3 -std=c++20 -I. -I/opt/homebrew/include" \
+  LDLIBS="-L/opt/homebrew/lib -Wl,-rpath,/opt/homebrew/lib -lflint -lgmp -lmimalloc -ltbb"
 ```
+
+#### Linux note
+
+On Linux (the archive's original target) libstdc++ is the default and the plain `make` rule works once FLINT, GMP, TBB, and mimalloc are installed — none of the macOS libc++ issues arise.
 
 ### Ubuntu/Debian
 
@@ -181,6 +193,6 @@ After Mathematica roundtrip, all checked `FEC_2..FEC_6` CRC32 values match the a
 
 - If `make` cannot find `SparseRREF/sparse_mat.h`, clone `SparseRREF` into the repository root.
 - If `git` fails on macOS with an `xcode-select` error, install the Apple command-line tools or use the conda-forge setup above.
-- If compilation fails around `<format>`, `std::chrono::zoned_time`, or parallel algorithms in `SparseRREF`, use a newer C++20 compiler from conda-forge or another current toolchain.
+- If compilation fails on macOS with `no member named 'par' in namespace 'std::execution'` or `no member named 'zoned_time' in namespace 'std::chrono'`, you are hitting the libc++ limitation described in the macOS section above. A newer clang will **not** fix it — build with Homebrew GCC instead: `make CXX=g++-14`.
 - If the linker cannot find FLINT, GMP, TBB, or mimalloc, check that the matching include and library paths are visible to `make`.
 - If byte-level WXF CRC32 values differ from archived Mathematica exports, compare after a Mathematica roundtrip rather than comparing raw SparseRREF-native WXF bytes.
