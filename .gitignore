@@ -67,3 +67,9 @@ tmp/
 
 # SparseRREF
 SparseRREF/
+
+# TRAE local workspace (notes, summaries — must not be pushed)
+.trae/
+
+# Local reference files (must not be pushed)
+.local/
