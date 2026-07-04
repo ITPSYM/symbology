@@ -39,9 +39,9 @@ working on a module.
 | Projection (collinear) | `SEW_5p1` | Verified (basis dims `2 × 546 × 11`, rank 7 expansion) |
 | Projection (symmetries) | `SEW_5p1` cyclic/flip/parity | Verified (all three are identity `diag(1,1)` for `E6`) |
 | Symmetry solving | `SEW_5p1` cyclic/flip/parity | Verified (invariant subspace == full space) |
-| Collinear solving | `SEW_3p1` (L=2) | Verified (unique solution `c[0] = 8`, 8 constraints, `R2` divergent-free) |
-| Collinear solving | `SEW_5p1` (L=3) | Verified (unique solution `c[0] = -24, c[1] = 2`, 32 constraints, `R3` divergent-free) |
-| Compute RHS | L=2, L=3 | Verified end-to-end |
+| Collinear solving | `SEW_3p1` (L=2) | Verified with `colprojdiv_w1`: unique solution `c[0] = 8`, 8 constraints, `R2` divergent-free. Union matching: 8 intersection, 0 b-only. |
+| Collinear solving | `SEW_5p1` (L=3) | Verified with `colprojdiv_w1`: unique solution `c[0] = -24, c[1] = 2`, 32 constraints, `R3` divergent-free. Union matching: 32 intersection, 0 b-only. |
+| Compute RHS | L=2, L=3 | Verified end-to-end with `colprojdiv_w1` (identity is inconsistent at all `L ≥ 2` for `E6`) |
 
 ## Pitfalls (cross-cutting)
 
@@ -71,14 +71,20 @@ because they affect every module:
    projection onto the first coordinate.
 7. **E1 has divergent-letter entries.** `E1[0,0] = -2` and
    `E1[1,1] = -2`. The boundary `E1^L / L!` therefore has divergent
-   components, and solving `c·A = boundary` in the full space fails at
-   `L ≥ 3`. The letter-space projection is **user-selectable** via
-   `--letter-projection` (`identity` = do nothing); for the standard
-   `E6` solve at `L ≥ 3` you must pass a divergent projection such as
-   `colprojdiv_w1` so both `A` and the boundary are projected to the
-   divergent subspace (`apply_colprojdiv_slots`) before matching.
-8. **`--letter-projection` is required.** `--solve-collinear` and
-   `compute_rhs` both exit with code 1 if the flag is missing. The
-   flag is not hardcoded: the solver is a general collinear-like
-   constraint solver, and the user selects the letter subspace to
-   project into. `identity` is the do-nothing value.
+   components. Under union matching, `--letter-projection identity`
+   is inconsistent at all `L ≥ 2` for `E6` (the boundary has entries at
+   letter combinations that A does not cover in the full 11-dim
+   space). The letter-space projection is **user-selectable** via
+   `--letter-projection`; for the standard `E6` solve pass a divergent
+   projection such as `colprojdiv_w1` so both `A` and the boundary are
+   projected to the divergent subspace (`apply_colprojdiv_slots`),
+   where their supports coincide exactly.
+8. **`--letter-projection` is required, and matching is union-based.**
+   `--solve-collinear` and `compute_rhs` both exit with code 1 if the
+   flag is missing. The constraint `c·A = boundary` is enforced at the
+   **union** of A's and boundary's nonzero supports: positions where
+   `A ≠ 0` but `boundary = 0` give homogeneous constraints `c·A = 0`;
+   positions where `boundary ≠ 0` but `A = 0` make the system
+   trivially inconsistent. The flag is not hardcoded — the solver is a
+   general collinear-like constraint solver, and the user selects the
+   letter subspace. `identity` is the do-nothing value (no projection).

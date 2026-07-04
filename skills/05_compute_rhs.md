@@ -151,20 +151,25 @@ first run, and triggers writes to `output/collinear/` via `--project`.
 
 # L=3 (SEW_5p1): computes E3, R3, boundary_3L (requires L=2 outputs)
 ./compute_rhs --target SEW_5p1 --letter-projection output/collinear/colprojdiv_w1.wxf
-
-# Identity: solve in the full letter space (no divergent projection)
-./compute_rhs --target SEW_3p1 --letter-projection identity
 ```
+
+Note: `--letter-projection identity` is inconsistent at all `L ≥ 2` for
+the `E6` example (union matching requires exact cancellation; the
+boundary has divergent-letter entries that A does not cover in the full
+11-dim space). Use `colprojdiv_w1` for the standard `E6` workflow.
 
 ## Verified status
 
-- **L=2**: boundary `E1²/2` (68 nnz before scaling), `E2` (rank 4),
-  `R2` (rank 4, divergent-free).
-- **L=3**: boundary `E1³/6 + E1·R2` (5894 nnz), `E3` (rank 6, 11606 nnz),
-  `R3` (rank 6, 10461 nnz, divergent-free — contains only letters
-  `{2,3,4,5,6,7,8,9,10}`).
-- Solution at L=3: `c[0] = -24, c[1] = 2` (unique, all 32 constraints
-  verified).
+- **L=2 with `colprojdiv_w1`**: boundary `E1²/2` (68 nnz before scaling),
+  `E2` (rank 4), `R2` (rank 4, divergent-free). Union matching: 8
+  intersection, 0 homogeneous, 0 b-only. Solution `c[0] = 8`.
+- **L=3 with `colprojdiv_w1`**: boundary `E1³/6 + E1·R2` (5894 nnz),
+  `E3` (rank 6, 11606 nnz), `R3` (rank 6, 10461 nnz, divergent-free —
+  contains only letters `{2,3,4,5,6,7,8,9,10}`). Union matching: 32
+  intersection, 0 homogeneous, 0 b-only. Solution `c[0] = -24, c[1] = 2`
+  (unique, all 32 constraints verified).
+- **`identity` (both L=2 and L=3)**: union matching is inconsistent
+  (24 b-only at L=2; 1857 b-only at L=3) — no solution written.
 
 ## Pitfalls
 

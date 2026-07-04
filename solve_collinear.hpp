@@ -638,10 +638,22 @@ void run_collinear_solver(
 		std::cout << "== --letter-projection identity: solving in full letter space (no projection) ==" << std::endl;
 	}
 
-	// Step 5c: Match positions (preserve sew axis).
-	// A (expanded SEW basis) and boundary may have different supports. We solve
-	// using only matching positions (both nonzero), where the ratio c = boundary/A
-	// should be consistent. Non-matching positions become part of R*.
+	// Step 5c: Match positions — UNION of supports.
+	// We enforce c·A = boundary at EVERY position where either A or boundary
+	// is nonzero (not just the intersection). This is the "exact match"
+	// semantics: after projecting both sides via --letter-projection, the
+	// projected supports should coincide and c·A cancels boundary exactly.
+	//
+	// Three cases per letter multi-index key:
+	//   - Both nonzero (intersection): c·A[key] = b[key]
+	//   - A nonzero, b zero (homogeneous): c·A[key] = 0
+	//   - A zero, b nonzero (b-only): 0 = b[key] → inconsistent if b[key]≠0
+	//
+	// The b-only case makes the system trivially inconsistent (0 = nonzero);
+	// we detect it here and skip the linear solver, because the solver's
+	// "non-trivial constraint" filter (M[i].nnz() > 0) would silently skip
+	// these zero-A rows.
+	//
 	// CRITICAL: preserve the sew axis in A_match — do not collapse into std::map
 	// (that overwrites duplicate sew entries and breaks multi-unknown systems).
 	std::map<std::vector<index_t>, T> b_map;
@@ -651,31 +663,72 @@ void run_collinear_solver(
 
 	sparse_tensor<T, index_t, SPARSE_COO> A_match(A_coo.dims());
 	sparse_tensor<T, index_t, SPARSE_COO> b_match(b_coo.dims());
-	std::set<std::vector<index_t>> matched_keys;
-	size_t n_A_entries = 0;
+	std::set<std::vector<index_t>> A_keys;          // keys where A ≠ 0
+	std::set<std::vector<index_t>> emitted_keys;    // keys already emitted to b_match
+
+	// First pass: iterate A. Emit every A entry; pair with b[key] if present,
+	// else with 0 (homogeneous constraint c·A[key] = 0).
 	for (auto i : A_coo.gen_perm()) {
 		auto full_idx = A_coo.index_vector(i);
 		std::vector<index_t> key(full_idx.begin() + 1, full_idx.end());
+		A_keys.insert(key);
+
 		auto it = b_map.find(key);
-		if (it != b_map.end()) {
-			A_match.push_back(full_idx, A_coo.val(i));
-			if (matched_keys.insert(key).second) {
-				b_match.push_back(key, it->second);
+		T b_val = (it != b_map.end()) ? it->second : T(0);
+
+		A_match.push_back(full_idx, A_coo.val(i));
+		if (emitted_keys.insert(key).second) {
+			if (b_val != T(0)) {
+				b_match.push_back(key, b_val);
 			}
-			n_A_entries++;
+			// b_val == 0: don't store (canonicalize drops zeros anyway);
+			// the solver treats missing b entries as 0 → enforces c·A[key] = 0.
 		}
 	}
+
+	// Second pass: detect b-only positions (A=0, b≠0).
+	// These make the system trivially inconsistent.
+	size_t n_b_only = 0;
+	for (const auto& [key, b_val] : b_map) {
+		if (A_keys.find(key) == A_keys.end()) {
+			n_b_only++;
+		}
+	}
+
 	A_match.canonicalize();
 	b_match.canonicalize();
 
-	std::cout << "   Matching positions: " << matched_keys.size()
-	          << " (A_entries=" << n_A_entries << ")" << std::endl;
+	size_t n_intersection = 0;
+	size_t n_homogeneous = 0;
+	for (const auto& key : A_keys) {
+		if (b_map.find(key) != b_map.end()) {
+			n_intersection++;
+		} else {
+			n_homogeneous++;
+		}
+	}
+
+	std::cout << "   Union matching:" << std::endl;
+	std::cout << "      Both nonzero (intersection): " << n_intersection << std::endl;
+	std::cout << "      A nonzero, b zero (homogeneous c·A=0): " << n_homogeneous << std::endl;
+	std::cout << "      A zero, b nonzero (INCONSISTENT): " << n_b_only << std::endl;
 
 	// Step 6: Solve c.A_match = b_match
-	auto A_match_csr = sparse_tensor<T, index_t, SPARSE_CSR>(std::move(A_match), pool);
-	auto b_match_csr = sparse_tensor<T, index_t, SPARSE_CSR>(std::move(b_match), pool);
-	auto result = solve_linear_system<T, index_t>(
-		std::move(A_match_csr), std::move(b_match_csr), F, opt);
+	// If any b-only position exists, the system is trivially inconsistent
+	// (0 = nonzero) — skip the linear solver.
+	linear_solve_result_t<T, index_t> result;
+	if (n_b_only > 0) {
+		std::cout << "   System is INCONSISTENT: " << n_b_only
+		          << " positions where boundary ≠ 0 but A = 0." << std::endl;
+		std::cout << "   (Under union matching, c·A must equal boundary exactly.)" << std::endl;
+		result.consistent = false;
+		result.unique = false;
+	} else {
+		auto A_match_csr = sparse_tensor<T, index_t, SPARSE_CSR>(std::move(A_match), pool);
+		auto b_match_csr = sparse_tensor<T, index_t, SPARSE_CSR>(std::move(b_match), pool);
+		result = solve_linear_system<T, index_t>(
+			std::move(A_match_csr), std::move(b_match_csr), F, opt);
+	}
 
 	// Step 6b: Write solMHV_LL.wxf for SEW targets
 	if (!sew_name.empty() && result.consistent) {

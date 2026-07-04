@@ -3,6 +3,75 @@
 All notable changes to this repository are documented here. Dates use
 ISO 8601 (YYYY-MM-DD) and the local timezone is Asia/Shanghai.
 
+## [2026-07-04] Union matching for collinear constraint (--letter-projection)
+
+### Summary
+Changed the collinear constraint matching from **intersection-only**
+(enforce `c·A = boundary` only at positions where both are nonzero) to
+**union** (enforce at every position where either is nonzero). This is
+the "exact match" semantics: after projecting both sides via
+`--letter-projection`, the projected supports should coincide and
+`c·A` cancels `boundary` exactly in the projected subspace. Under
+union matching:
+
+- Positions where `A ≠ 0` but `boundary = 0` become **homogeneous**
+  constraints `c·A[key] = 0` (enforced automatically by the linear
+  solver, which treats missing b entries as 0).
+- Positions where `boundary ≠ 0` but `A = 0` make the system
+  **trivially inconsistent** (0 = nonzero). These are detected before
+  the linear solver and reported with a count.
+
+Consequence: `--letter-projection identity` is now **inconsistent at
+all `L ≥ 2`** for the `E6` example, because the boundary `E1^L / L!`
+has entries at letter combinations involving the divergent letters
+`{0, 1}` that the SEW collinear basis `A` does not cover in the full
+11-dim space. Previously (intersection matching) `identity` appeared
+to work at `L = 2`; this was incorrect — the divergent entries were
+silently skipped. With a divergent projection (`colprojdiv_w1`) the
+supports coincide exactly (0 homogeneous, 0 b-only) and the verified
+solutions `c[0] = 8` (L=2) and `c[0] = -24, c[1] = 2` (L=3) are
+preserved.
+
+### Modified
+- **`solve_collinear.hpp`** (`run_collinear_solver`) — replaced the
+  intersection-only matching loop with a two-pass union matcher: (1)
+  iterate A, emit every A entry paired with `b[key]` if present else
+  with 0 (homogeneous); (2) scan b_map for keys not in A_keys and
+  count b-only positions. If any b-only position exists, set
+  `result.consistent = false` and skip the linear solver. Added
+  logging of the three categories (intersection / homogeneous /
+  b-only).
+- **Docs** (`skills/04`, `skills/05`, `skills/README`, `README`,
+  `CHANGELOG`) — updated Step 5 (matching), Conventions, Smoke test,
+  Verified status, and Pitfalls to reflect union matching. Removed
+  the misleading "identity works at L=2" claim (it was an artifact of
+  intersection matching). All examples now use `colprojdiv_w1`.
+
+### Behavior change
+Previously, `--letter-projection identity` at `L = 2` returned a
+"consistent" solution `c[0] = 8` because the solver only enforced
+constraints at the intersection of A's and boundary's supports. Under
+union matching, the same invocation now correctly reports
+**inconsistent** (24 b-only positions at L=2; 1857 at L=3). This is
+the intended behavior per the design spec: `identity` is the
+do-nothing value, but "do nothing" means "require exact cancellation
+in the full letter space", which is a stronger constraint than the
+projected solve.
+
+### Verification
+- `colprojdiv_w1` at L=2: union matching 8 intersection / 0
+  homogeneous / 0 b-only → unique solution `c[0] = 8`, 8 constraints
+  verified. `R2` divergent-free. (Unchanged from before.)
+- `colprojdiv_w1` at L=3: union matching 32 intersection / 0
+  homogeneous / 0 b-only → unique solution `c[0] = -24, c[1] = 2`,
+  32 constraints verified. `R3` divergent-free. (Unchanged from
+  before.)
+- `identity` at L=2: union matching 44 intersection / 87 homogeneous
+  / 24 b-only → **inconsistent** (24 positions where `boundary ≠ 0`
+  but `A = 0`).
+- `identity` at L=3: union matching 4037 intersection / 7569
+  homogeneous / 1857 b-only → **inconsistent** (1857 b-only positions).
+
 ## [2026-07-04] Configurable letter projection (--letter-projection)
 
 ### Summary

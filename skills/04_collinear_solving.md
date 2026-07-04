@@ -87,33 +87,57 @@ method, skipped for `identity`).
      solve happens in the full 11-dim letter space ("do nothing").
    - A divergent projection is **required at `L ≥ 3`** when `E1` has
      divergent-letter entries (`E1[0,0] = -2`, `E1[1,1] = -2`), so the
-     boundary has divergent components and solving in the full space
-     fails. At `L = 2` the boundary has no divergent components, so
-     `identity` and `colprojdiv_w1` give the same result.
+     boundary has divergent components. Under union matching, `identity`
+     is inconsistent at **all** `L ≥ 2` for the `E6` example because the
+     boundary's entries at letter combinations involving `{0, 1}` are
+     not covered by A in the full 11-dim space. Use `colprojdiv_w1` to
+     project both sides to the divergent subspace, where the supports
+     coincide exactly.
 
-4. **Match positions** (`A_match`, `b_match`):
+4. **Match positions — UNION of supports** (`A_match`, `b_match`):
+   - Enforce `c·A = boundary` at **every** position where either `A` or
+     `boundary` is nonzero (not just the intersection). This is the
+     "exact match" semantics: after projecting both sides via
+     `--letter-projection`, the projected supports should coincide and
+     `c·A` cancels `boundary` exactly in the projected subspace.
+   - Three cases per letter multi-index `key`:
+     - **Both nonzero** (intersection): `c·A[key] = b[key]`.
+     - **A nonzero, b zero** (homogeneous): `c·A[key] = 0` — enforces
+       that A's extra support is annihilated by `c`.
+     - **A zero, b nonzero** (b-only): `0 = b[key]` — trivially
+       inconsistent. Detected before the linear solver; if any such
+       position exists, the system is reported inconsistent and the
+       solver is skipped.
    - Iterate `A_proj` directly (do **not** collapse into
      `std::map<key, T>` — that overwrites duplicate sew entries and
      breaks the multi-unknown system).
    - Preserve the sew axis in `A_match` so positions with both sew
      entries contribute two coefficients: `c0·A[0,key] + c1·A[1,key] = b[key]`.
-   - `b_match` has one entry per matching key.
+   - When a divergent projection is used (`colprojdiv_w1`), the
+     projected supports coincide exactly: intersection = union, with
+     zero homogeneous and zero b-only positions. When `identity` is
+     used, the boundary's finite components are not covered by A, so
+     b-only positions appear and the system is inconsistent.
 
 5. **Linear solve** (`linear_solve.hpp`):
    - Reshape `A_match` to `(n_unknowns, n_constraints)` and `b_match` to
      `(1, n_constraints)`.
+   - Homogeneous constraints (A≠0, b=0) are included automatically:
+     the solver collects "non-trivial" rows (where the A row has
+     nonzero entries) and treats missing b entries as 0.
    - If too many constraints, sample `3 × n_unknowns` constraints, solve,
      then verify against all.
    - Uses modular RREF over `Z / 2^61` with reconstruction to `rat_t`.
 
 6. **Indicator-vector verification** (skipped if `--letter-projection identity`):
-   - Compute `R* = c·A - boundary`.
+   - Compute `R* = c·A - boundary` (in the **unprojected** full letter
+     space — this is the finite remainder).
    - Collect the distinct letter indices appearing in `R*`'s non-zero
      entries.
    - Build an 11-dim indicator vector (1 at those indices, 0 elsewhere).
    - Project with the `--letter-projection` matrix. If the result is
      zero, `R*` is divergent-free (no entries at letters `{0, 1}`), so
-     the collinear constraint is satisfied.
+     the collinear constraint is satisfied and `R*` is purely finite.
 
 ## Inputs
 
@@ -156,11 +180,15 @@ Empty projections (0 rows) are not written.
 - **`--letter-projection` is required** — there is no default. Pass
   either a file path (e.g. `output/collinear/colprojdiv_w1.wxf`) or
   the literal `identity` to skip projection (solve in full letter
-  space). `identity` is the **do-nothing** value: the constraint is
-  enforced on matching positions only, with no letter-space projection.
-  This makes the solver reusable for any collinear-like projection —
-  the user selects the letter subspace to project into, instead of the
-  code hardcoding `colprojdiv_w1`.
+  space). `identity` is the **do-nothing** value: no projection is
+  applied. This makes the solver reusable for any collinear-like
+  projection — the user selects the letter subspace to project into,
+  instead of the code hardcoding `colprojdiv_w1`. Note: under union
+  matching, `identity` requires `c·A` to match `boundary` exactly in
+  the full letter space, which is a **stronger** constraint than the
+  projected solve — for the `E6` example it is inconsistent at all
+  `L ≥ 2` because the boundary has entries at letter combinations
+  that A does not cover.
 - **`--data-dir` / `--output-dir`**: default to `<exec_dir>/data` and
   `<exec_dir>/output`. Relative paths resolve against the executable
   directory (same convention as `bootstrap`).
@@ -188,11 +216,6 @@ Empty projections (0 rows) are not written.
 # L=3: boundary = E1³/6 + E1·R2 (requires L=2 outputs to exist)
 ./bootstrap --solve-collinear --target SEW_5p1 --rhs output/3loop/boundary_3L.wxf \
     --projection divergent --letter-projection output/collinear/colprojdiv_w1.wxf
-
-# Identity case (no divergent projection; only works when E1 has no divergent entries
-# or when solving at L=2 where the boundary already lies in the finite subspace)
-./bootstrap --solve-collinear --target SEW_3p1 --rhs output/2loop/boundary_2L.wxf \
-    --projection divergent --letter-projection identity
 ```
 
 For the full recursive workflow (computing the boundary too), use
@@ -201,20 +224,33 @@ For the full recursive workflow (computing the boundary too), use
 
 ## Verified status
 
-- **L=2 (`SEW_3p1`)**: unique solution `c[0] = 8`, 8 constraints
-  verified. `R2` is divergent-free.
-- **L=3 (`SEW_5p1`)**: unique solution `c[0] = -24, c[1] = 2`, all 32
-  constraints verified. `R3` contains only letters
-  `{2,3,4,5,6,7,8,9,10}` (no divergent letters `{0,1}`), so
-  `R3 = R*` is divergent-free.
+- **L=2 (`SEW_3p1`)** with `colprojdiv_w1`: union matching reports
+  8 intersection, 0 homogeneous, 0 b-only; unique solution `c[0] = 8`,
+  all 8 constraints verified. `R2` is divergent-free.
+- **L=3 (`SEW_5p1`)** with `colprojdiv_w1`: union matching reports
+  32 intersection, 0 homogeneous, 0 b-only; unique solution
+  `c[0] = -24, c[1] = 2`, all 32 constraints verified. `R3` contains
+  only letters `{2,3,4,5,6,7,8,9,10}` (no divergent letters `{0,1}`),
+  so `R3 = R*` is divergent-free.
+- **`identity` at L=2**: union matching reports 44 intersection,
+  87 homogeneous, 24 b-only → system is **inconsistent** (24 positions
+  where `boundary ≠ 0` but `A = 0`). This is expected: the boundary
+  `E1²/2` has divergent-letter entries that A does not cover in the
+  full 11-dim space.
+- **`identity` at L=3**: union matching reports 4037 intersection,
+  7569 homogeneous, 1857 b-only → system is **inconsistent** (1857
+  b-only positions).
 
 ## Pitfalls
 
 1. **Map overwrite bug**: never collapse `A` into `std::map<key, T>`
    when `sew_dim > 1`. Iterate `A` directly and preserve the sew axis.
-2. **Divergent-subspace projection is required at `L ≥ 3`**: because
-   `E1` has divergent-letter entries, the boundary has divergent
-   components, and solving in the full space produces inconsistent
-   systems (e.g. at L=3: 19 distinct ratio values).
+2. **Union matching requires exact cancellation**: the constraint
+   `c·A = boundary` is enforced at the **union** of A's and boundary's
+   supports. Positions where `boundary ≠ 0` but `A = 0` make the system
+   trivially inconsistent (0 = nonzero). For the `E6` example, this
+   means `--letter-projection identity` is inconsistent at all `L ≥ 2`
+   — use a divergent projection (`colprojdiv_w1`) so both sides are
+   projected to a subspace where their supports coincide.
 3. **`expansion_perm` slot order**: new letters go immediately after
    the FEC axis, not at the end.
