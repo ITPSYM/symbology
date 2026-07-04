@@ -6,11 +6,12 @@
 // each loop order.
 //
 // Usage:
-//   ./compute_rhs --target <SEW_FpL> [--data-dir <dir>] [--output-dir <dir>]
+//   ./compute_rhs --target <SEW_FpL> --letter-projection <file|identity>
+//                 [--data-dir <dir>] [--output-dir <dir>]
 //
 // Examples:
-//   ./compute_rhs --target SEW_3p1    (2-loop: computes E2, R2, boundary_2L)
-//   ./compute_rhs --target SEW_5p1    (3-loop: computes E3, R3, boundary_3L, requires E2/R2)
+//   ./compute_rhs --target SEW_3p1 --letter-projection output/collinear/colprojdiv_w1.wxf
+//   ./compute_rhs --target SEW_5p1 --letter-projection output/collinear/colprojdiv_w1.wxf
 //
 // The loop order L is derived from the SEW target: L = (F + L) / 2.
 // For SEW_3p1: L = (3+1)/2 = 2. For SEW_5p1: L = (5+1)/2 = 3.
@@ -28,18 +29,23 @@ struct rhs_args_t {
 	std::string target;
 	std::filesystem::path data_dir;
 	std::filesystem::path output_dir;
+	std::string letter_projection;  // "identity" or a file path
 	bool help = false;
 };
 
 void print_usage(const char* program) {
 	std::cerr << "Usage:" << std::endl;
-	std::cerr << "  " << program << " --target <SEW_FpL> [--data-dir <dir>] [--output-dir <dir>]" << std::endl;
+	std::cerr << "  " << program << " --target <SEW_FpL> --letter-projection <file|identity>"
+	          << " [--data-dir <dir>] [--output-dir <dir>]" << std::endl;
 	std::cerr << std::endl;
 	std::cerr << "Options:" << std::endl;
-	std::cerr << "  --target <SEW_FpL>  Target SEW name (e.g. SEW_3p1 for 2-loop, SEW_5p1 for 3-loop)" << std::endl;
-	std::cerr << "  --data-dir <dir>    Data directory with seed files (default: <exec_dir>/data)" << std::endl;
-	std::cerr << "  --output-dir <dir>  Output directory (default: <exec_dir>/output)" << std::endl;
-	std::cerr << "  -h, --help          Show this help message" << std::endl;
+	std::cerr << "  --target <SEW_FpL>            Target SEW name (e.g. SEW_3p1 for 2-loop, SEW_5p1 for 3-loop)" << std::endl;
+	std::cerr << "  --letter-projection <file|identity>" << std::endl;
+	std::cerr << "                               Letter-slot projection matrix (e.g. output/collinear/colprojdiv_w1.wxf)" << std::endl;
+	std::cerr << "                               Use 'identity' to skip projection (solve in full letter space)" << std::endl;
+	std::cerr << "  --data-dir <dir>             Data directory with seed files (default: <exec_dir>/data)" << std::endl;
+	std::cerr << "  --output-dir <dir>           Output directory (default: <exec_dir>/output)" << std::endl;
+	std::cerr << "  -h, --help                   Show this help message" << std::endl;
 }
 
 std::string take_value(int& i, int argc, char* argv[], const std::string& flag) {
@@ -63,6 +69,9 @@ rhs_args_t parse_args(int argc, char* argv[]) {
 		else if (arg == "--output-dir") {
 			args.output_dir = take_value(i, argc, argv, arg);
 		}
+		else if (arg == "--letter-projection") {
+			args.letter_projection = take_value(i, argc, argv, arg);
+		}
 		else if (arg == "-h" || arg == "--help") {
 			args.help = true;
 		}
@@ -78,9 +87,17 @@ int main(int argc, char* argv[]) {
 		rhs_args_t args = parse_args(argc, argv);
 
 		if (args.help || args.target.empty()) {
-			print_usage(argv[0]);
-			return args.help ? 0 : 1;
-		}
+		print_usage(argv[0]);
+		return args.help ? 0 : 1;
+	}
+
+	if (args.letter_projection.empty()) {
+		std::cerr << "Error: --letter-projection <file|identity> is required." << std::endl;
+		std::cerr << "   Use '--letter-projection identity' to skip projection (solve in full letter space)." << std::endl;
+		std::cerr << "   Use '--letter-projection <file>' to project each letter slot, e.g." << std::endl;
+		std::cerr << "       --letter-projection output/collinear/colprojdiv_w1.wxf" << std::endl;
+		return 1;
+	}
 
 		// Parse the target to determine the loop order
 		auto target = parse_target(args.target);
@@ -125,11 +142,20 @@ int main(int argc, char* argv[]) {
 		args.output_dir = base / args.output_dir;
 	}
 
+	// Resolve --letter-projection: "identity" passes through as-is; a relative
+	// path is resolved against the executable directory (matching --data-dir /
+	// --output-dir).
+	std::string letter_projection = args.letter_projection;
+	if (letter_projection != "identity" && !std::filesystem::path(letter_projection).is_absolute()) {
+		letter_projection = (base / letter_projection).string();
+	}
+
 		std::cout << "========================================" << std::endl;
 		std::cout << "Compute RHS (collinear boundary)" << std::endl;
 		std::cout << "   Target: " << args.target << " (loop order L=" << L << ")" << std::endl;
 		std::cout << "   Data dir: " << args.data_dir.string() << std::endl;
 		std::cout << "   Output dir: " << args.output_dir.string() << std::endl;
+		std::cout << "   Letter projection: " << letter_projection << std::endl;
 		std::cout << "========================================" << std::endl;
 
 		field_t F(FIELD_QQ);
@@ -151,7 +177,7 @@ int main(int argc, char* argv[]) {
 		total_timer.start();
 
 		compute_rhs_for_loop<scalar_t, index_t>(
-			L, args.data_dir, args.output_dir, F, opt);
+			L, args.data_dir, args.output_dir, letter_projection, F, opt);
 
 		total_timer.stop();
 		local_time = std::chrono::zoned_time{

@@ -31,6 +31,7 @@ struct args_t {
 	std::filesystem::path rhs;
 	std::string projection_type;  // "finite" or "divergent"
 	std::vector<std::filesystem::path> basis_paths;  // expansion bases (highest weight first)
+	std::string letter_projection;  // "identity" or a file path (resolved against exec dir)
 	// --data-dir / --output-dir (for --project, --solve-symmetry, --solve-collinear).
 	// Empty means "use default" (resolved against the executable directory after parsing).
 	std::filesystem::path data_dir;
@@ -46,7 +47,7 @@ void print_usage(const char* program) {
 	std::cerr << "  " << program << " --sew -c <condition.wxf> -f <FEC.wxf> -l <LEC.wxf> -o <SEW.wxf>" << std::endl;
 	std::cerr << "  " << program << " --project --symmetry <collinear|cyclic|flip|parity> --target <SEW_FpL|FEC_W|LEC_W> [--data-dir <dir>] [--output-dir <dir>]" << std::endl;
 	std::cerr << "  " << program << " --solve-symmetry --symmetry <cyclic|flip|parity> --target <SEW_FpL|FEC_W|LEC_W> [--data-dir <dir>] [--output-dir <dir>]" << std::endl;
-	std::cerr << "  " << program << " --solve-collinear --target <SEW_FpL|FEC_W> --rhs <rhs.wxf> --projection <finite|divergent> [--basis <basis.wxf> ...] [--data-dir <dir>] [--output-dir <dir>]" << std::endl;
+	std::cerr << "  " << program << " --solve-collinear --target <SEW_FpL|FEC_W> --rhs <rhs.wxf> --projection <finite|divergent> --letter-projection <file|identity> [--basis <basis.wxf> ...] [--data-dir <dir>] [--output-dir <dir>]" << std::endl;
 	std::cerr << std::endl;
 	std::cerr << "  --data-dir defaults to <exec_dir>/data; --output-dir defaults to <exec_dir>/output." << std::endl;
 	std::cerr << "  --extend / --sew ignore --data-dir / --output-dir (use explicit -c/-f/-l/-o paths)." << std::endl;
@@ -100,6 +101,9 @@ args_t parse_args(int argc, char* argv[]) {
 		}
 		else if (arg == "--projection") {
 			args.projection_type = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "--letter-projection") {
+			args.letter_projection = take_value(i, argc, argv, arg);
 		}
 		else if (arg == "--basis") {
 			args.basis_paths.push_back(take_value(i, argc, argv, arg));
@@ -184,6 +188,13 @@ void validate_args(const args_t& args) {
 		}
 		if (args.projection_type != "finite" && args.projection_type != "divergent") {
 			throw std::runtime_error("--projection must be 'finite' or 'divergent', got: " + args.projection_type);
+		}
+		if (args.letter_projection.empty()) {
+			std::cerr << "Error: --solve-collinear requires --letter-projection <file|identity>." << std::endl;
+			std::cerr << "   Use '--letter-projection identity' to skip projection (solve in full letter space)." << std::endl;
+			std::cerr << "   Use '--letter-projection <file>' to project each letter slot, e.g." << std::endl;
+			std::cerr << "       --letter-projection output/collinear/colprojdiv_w1.wxf" << std::endl;
+			std::exit(1);
 		}
 		// Validate target name early via parse_target (throws on bad format).
 		parse_target(args.target);
@@ -356,10 +367,18 @@ int main(int argc, char* argv[]) {
 				sew_name = target.name;
 			}
 
+			// Resolve --letter-projection: "identity" means no projection; a path
+			// is resolved against the executable directory if relative.
+			std::string letter_projection = args.letter_projection;
+			if (letter_projection != "identity") {
+				letter_projection = resolve_path(base, letter_projection).string();
+			}
+
 			run_collinear_solver<scalar_t, index_t>(
 				target_basis_path, rhs_path, args.projection_type,
 				expansion_bases, chain_base_paths,
-				target_weight, data_dir, output_dir, F, opt, sew_name);
+				target_weight, data_dir, output_dir, F, opt, sew_name,
+				letter_projection);
 		}
 		else {
 			std::filesystem::path condition_path = resolve_path(base, args.condition);

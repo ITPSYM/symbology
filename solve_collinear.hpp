@@ -485,7 +485,8 @@ void run_collinear_solver(
 	const std::filesystem::path& data_dir,
 	const std::filesystem::path& output_dir,
 	const field_t& F, rref_option_t& opt,
-	const std::string& sew_name = "") {
+	const std::string& sew_name = "",
+	const std::string& letter_projection = "identity") {
 
 	thread_pool* pool = &(opt->pool);
 	auto collinear_dir = output_dir / "collinear";
@@ -595,38 +596,47 @@ void run_collinear_solver(
 		print_tensor_info(rhs);
 	}
 
-	// Step 5b: Load colprojdiv_w1 and project A + boundary to divergent subspace.
-	// The collinear constraint c.A = b is only enforced in the divergent subspace.
-	// Each 11-dim letter slot is projected to its 2-dim divergent subspace via
-	// colprojdiv_w1. This is required at L>=3 because E1 has divergent-letter
-	// entries (E1[0,0]=-2, E1[1,1]=-2), so the boundary has divergent components
-	// and solving in the full 11-dim space produces inconsistent systems.
-	auto colprojdiv_w1_path = collinear_dir / "colprojdiv_w1.wxf";
-	if (!std::filesystem::exists(colprojdiv_w1_path)) {
-		throw std::runtime_error("run_collinear_solver: colprojdiv_w1 not found: "
-			+ colprojdiv_w1_path.string()
-			+ " (run the collinear projection chain first)");
-	}
-	auto colprojdiv_w1_csr = projection_read_tensor<T, index_t>(colprojdiv_w1_path, F, pool);
-	sparse_tensor<T, index_t, SPARSE_COO> colprojdiv_w1_coo(std::move(colprojdiv_w1_csr));
-
+	// Step 5b: Project A + boundary to divergent subspace via --letter-projection.
+	// The collinear constraint c.A = b is only enforced in the projected subspace.
+	// Each 11-dim letter slot is projected via the given projection matrix (e.g.
+	// colprojdiv_w1, shape (11, 2)). This is required at L>=3 because E1 has
+	// divergent-letter entries (E1[0,0]=-2, E1[1,1]=-2), so the boundary has
+	// divergent components and solving in the full 11-dim space fails.
+	// Special case: "identity" means no projection (solve in the full letter space).
 	sparse_tensor<T, index_t, SPARSE_COO> A_coo(std::move(expanded));
 	sparse_tensor<T, index_t, SPARSE_COO> b_coo(std::move(rhs));
 
-	size_t n_letter_slots = b_coo.rank();   // = 2L
-	size_t A_first_slot = 1;                // A has leading sew_dim axis
+	if (letter_projection != "identity") {
+		std::filesystem::path letter_proj_path(letter_projection);
+		if (!std::filesystem::exists(letter_proj_path)) {
+			throw std::runtime_error("run_collinear_solver: --letter-projection file not found: "
+				+ letter_proj_path.string());
+		}
+		auto letter_proj_csr = projection_read_tensor<T, index_t>(letter_proj_path, F, pool);
+		sparse_tensor<T, index_t, SPARSE_COO> letter_proj_coo(std::move(letter_proj_csr));
+		std::cout << "== Projecting A and boundary via --letter-projection ==" << std::endl;
+		std::cout << "   letter_projection: " << letter_proj_path.string()
+		          << " (rank=" << letter_proj_coo.rank() << " dims=";
+		for (size_t i = 0; i < letter_proj_coo.rank(); i++) {
+			std::cout << letter_proj_coo.dim(i) << (i + 1 < letter_proj_coo.rank() ? "x" : "");
+		}
+		std::cout << " nnz=" << letter_proj_coo.nnz() << ")" << std::endl;
 
-	std::cout << "== Projecting A and boundary to divergent subspace ==" << std::endl;
-	std::cout << "   n_slots=" << n_letter_slots << ", A_first_slot=" << A_first_slot << std::endl;
-	A_coo = apply_colprojdiv_slots<T, index_t>(std::move(A_coo), colprojdiv_w1_coo, A_first_slot, n_letter_slots, F, pool);
-	b_coo = apply_colprojdiv_slots<T, index_t>(std::move(b_coo), colprojdiv_w1_coo, 0, n_letter_slots, F, pool);
+		size_t n_letter_slots = b_coo.rank();   // = 2L
+		size_t A_first_slot = 1;                // A has leading sew_dim axis
+		std::cout << "   n_slots=" << n_letter_slots << ", A_first_slot=" << A_first_slot << std::endl;
+		A_coo = apply_colprojdiv_slots<T, index_t>(std::move(A_coo), letter_proj_coo, A_first_slot, n_letter_slots, F, pool);
+		b_coo = apply_colprojdiv_slots<T, index_t>(std::move(b_coo), letter_proj_coo, 0, n_letter_slots, F, pool);
 
-	std::cout << "   A_proj: rank=" << A_coo.rank() << " dims=";
-	for (size_t i = 0; i < A_coo.rank(); i++) std::cout << A_coo.dim(i) << (i + 1 < A_coo.rank() ? "x" : "");
-	std::cout << " nnz=" << A_coo.nnz() << std::endl;
-	std::cout << "   b_proj: rank=" << b_coo.rank() << " dims=";
-	for (size_t i = 0; i < b_coo.rank(); i++) std::cout << b_coo.dim(i) << (i + 1 < b_coo.rank() ? "x" : "");
-	std::cout << " nnz=" << b_coo.nnz() << std::endl;
+		std::cout << "   A_proj: rank=" << A_coo.rank() << " dims=";
+		for (size_t i = 0; i < A_coo.rank(); i++) std::cout << A_coo.dim(i) << (i + 1 < A_coo.rank() ? "x" : "");
+		std::cout << " nnz=" << A_coo.nnz() << std::endl;
+		std::cout << "   b_proj: rank=" << b_coo.rank() << " dims=";
+		for (size_t i = 0; i < b_coo.rank(); i++) std::cout << b_coo.dim(i) << (i + 1 < b_coo.rank() ? "x" : "");
+		std::cout << " nnz=" << b_coo.nnz() << std::endl;
+	} else {
+		std::cout << "== --letter-projection identity: solving in full letter space (no projection) ==" << std::endl;
+	}
 
 	// Step 5c: Match positions (preserve sew axis).
 	// A (expanded SEW basis) and boundary may have different supports. We solve

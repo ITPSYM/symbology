@@ -10,17 +10,20 @@ Solve the collinear constraint `c · A = boundary`, where:
   `2L`: `{11, ..., 11}`).
 - `c` is the unknown coefficient vector (length `sew_dim`).
 
-The constraint is enforced **only in the divergent subspace** (each
-11-dim letter slot projected to its 2-dim divergent subspace via
-`colprojdiv_w1`). The finite part is `R* = c·A - boundary`, which must
-be divergent-free (verified by the indicator-vector method).
+The constraint is enforced in the projected letter subspace (each
+11-dim letter slot projected via the `--letter-projection` matrix, by
+default `colprojdiv_w1` which projects to the 2-dim divergent
+subspace). Pass `--letter-projection identity` to solve in the full
+letter space (no projection). The finite part is
+`R* = c·A - boundary`, which must be divergent-free when a divergent
+projection is used (verified by the indicator-vector method).
 
 ## CLI entry point
 
 ```bash
 ./bootstrap --solve-collinear --target <SEW_FpL> --rhs <rhs.wxf|0> \
-    --projection <finite|divergent> [--basis <basis.wxf> ...] \
-    [--data-dir <dir>] [--output-dir <dir>]
+    --projection <finite|divergent> --letter-projection <file|identity> \
+    [--basis <basis.wxf> ...] [--data-dir <dir>] [--output-dir <dir>]
 ```
 
 ## Flags
@@ -31,6 +34,7 @@ be divergent-free (verified by the indicator-vector method).
 | `--target <SEW_FpL>` | Target SEW name (e.g. `SEW_3p1` for 2-loop, `SEW_5p1` for 3-loop). |
 | `--rhs <rhs.wxf>` or `--rhs 0` | RHS path. Required — exits with code 1 if missing. `--rhs 0` means an all-zero RHS constructed in-memory. |
 | `--projection <finite\|divergent>` | Which projection to apply. Required — no default. |
+| `--letter-projection <file\|identity>` | Letter-slot projection matrix. Required. A path (e.g. `output/collinear/colprojdiv_w1.wxf`) projects each 11-dim letter slot to a lower-dim subspace; `identity` skips projection (solve in full letter space). Relative paths resolve against the executable directory. |
 | `--basis <basis.wxf>` | Expansion basis file (repeatable; highest weight first). If omitted, auto-detected as `first_w{N}_basis.wxf` for weights `target_weight-1` down to 2. |
 | `--data-dir <dir>` | Data directory with seed files (default: `<exec_dir>/data`). Resolved against the executable directory. |
 | `--output-dir <dir>` | Output directory (default: `<exec_dir>/output`). Same resolution as `--data-dir`. |
@@ -54,14 +58,17 @@ be divergent-free (verified by the indicator-vector method).
    - Result: `A` with rank `2L+1`, dims `{sew_dim, 11, ..., 11}`.
 
 3. **Project to the divergent subspace** (`apply_colprojdiv_slots`):
-   - Apply `colprojdiv_w1` to each 11-dim letter slot of both `A` and
-     the boundary.
+   - Apply the `--letter-projection` matrix to each 11-dim letter slot of
+     both `A` and the boundary. The default example is `colprojdiv_w1`,
+     which projects to the 2-dim divergent subspace.
    - `A_proj` becomes `{sew_dim, 2, ..., 2}`; `boundary_proj` becomes
      `{2, ..., 2}`.
-   - This step is **required** at `L ≥ 3` because `E1` has
-     divergent-letter entries (`E1[0,0] = -2`, `E1[1,1] = -2`), so the
-     boundary has divergent components and solving in the full space
-     fails.
+   - If `--letter-projection identity`, this step is skipped — the solve
+     happens in the full 11-dim letter space.
+   - Projection to the divergent subspace is **required** at `L ≥ 3`
+     when `E1` has divergent-letter entries (`E1[0,0] = -2`,
+     `E1[1,1] = -2`), so the boundary has divergent components and
+     solving in the full space fails.
 
 4. **Match positions** (`A_match`, `b_match`):
    - Iterate `A_proj` directly (do **not** collapse into
@@ -78,14 +85,14 @@ be divergent-free (verified by the indicator-vector method).
      then verify against all.
    - Uses modular RREF over `Z / 2^61` with reconstruction to `rat_t`.
 
-6. **Indicator-vector verification**:
+6. **Indicator-vector verification** (skipped if `--letter-projection identity`):
    - Compute `R* = c·A - boundary`.
    - Collect the distinct letter indices appearing in `R*`'s non-zero
      entries.
    - Build an 11-dim indicator vector (1 at those indices, 0 elsewhere).
-   - Project with `colprojdiv_w1`. If the result is zero, `R*` is
-     divergent-free (no entries at letters `{0, 1}`), so the collinear
-     constraint is satisfied.
+   - Project with the `--letter-projection` matrix. If the result is
+     zero, `R*` is divergent-free (no entries at letters `{0, 1}`), so
+     the collinear constraint is satisfied.
 
 ## Inputs
 
@@ -125,6 +132,9 @@ Empty projections (0 rows) are not written.
   message. `--rhs 0` means an empty (all-zero) RHS tensor.
 - **`--projection` is required** — there is no default. Pass either
   `finite` or `divergent` explicitly.
+- **`--letter-projection` is required** — there is no default. Pass
+  either a file path (e.g. `output/collinear/colprojdiv_w1.wxf`) or
+  the literal `identity` to skip projection (solve in full letter space).
 - **`--data-dir` / `--output-dir`**: default to `<exec_dir>/data` and
   `<exec_dir>/output`. Relative paths resolve against the executable
   directory (same convention as `bootstrap`).
@@ -146,10 +156,17 @@ Empty projections (0 rows) are not written.
 
 ```bash
 # L=2: solve for c such that c·A = E1²/2 (the boundary)
-./bootstrap --solve-collinear --target SEW_3p1 --rhs output/2loop/boundary_2L.wxf --projection divergent
+./bootstrap --solve-collinear --target SEW_3p1 --rhs output/2loop/boundary_2L.wxf \
+    --projection divergent --letter-projection output/collinear/colprojdiv_w1.wxf
 
 # L=3: boundary = E1³/6 + E1·R2 (requires L=2 outputs to exist)
-./bootstrap --solve-collinear --target SEW_5p1 --rhs output/3loop/boundary_3L.wxf --projection divergent
+./bootstrap --solve-collinear --target SEW_5p1 --rhs output/3loop/boundary_3L.wxf \
+    --projection divergent --letter-projection output/collinear/colprojdiv_w1.wxf
+
+# Identity case (no divergent projection; only works when E1 has no divergent entries
+# or when solving at L=2 where the boundary already lies in the finite subspace)
+./bootstrap --solve-collinear --target SEW_3p1 --rhs output/2loop/boundary_2L.wxf \
+    --projection divergent --letter-projection identity
 ```
 
 For the full recursive workflow (computing the boundary too), use

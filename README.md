@@ -117,7 +117,7 @@ The default (no tag) is `data/` + `output/`, which is backward compatible.
 ### Conventions
 
 - Inside `data_<PROJECT>/`, the seed files keep the same **roles** as in `data/` (see `data/DESCRIPTION.md`), but encode the symmetry group in the filename where it matters: `dlogmat_<group>.wxf` (e.g. `dlogmat_E7.wxf`), `FEC_1.wxf`, `LEC_1.wxf`, `colmat<N>.wxf` (where `<N>` is the FEC weight-1 dimension — `42` for `E6`), `colprojdiv.wxf`, `colprojfin.wxf`, `<group>repmat_*.wxf`, `E1.wxf`.
-- All executables accept `--data-dir <dir>` and `--output-dir <dir>`. Relative paths are resolved against the executable directory. The flags are threaded through every pipeline mode: `bootstrap --project` / `--solve-symmetry` / `--solve-collinear`, `compute_rhs`, and `inspect_tensors`. When `compute_rhs` shells out to `./bootstrap --extend` / `--sew` / `--project` (to generate missing prerequisites) and `./bootstrap --solve-collinear` (to solve the collinear constraint at each loop order), it passes the absolute `--data-dir` / `--output-dir` to the subprocess so the same project directories are used end to end.
+- All executables accept `--data-dir <dir>` and `--output-dir <dir>`. Relative paths are resolved against the executable directory. The flags are threaded through every pipeline mode: `bootstrap --project` / `--solve-symmetry` / `--solve-collinear`, `compute_rhs`, and `inspect_tensors`. When `compute_rhs` shells out to `./bootstrap --extend` / `--sew` / `--project` (to generate missing prerequisites) and `./bootstrap --solve-collinear` (to solve the collinear constraint at each loop order), it passes the absolute `--data-dir` / `--output-dir` to the subprocess so the same project directories are used end to end. The `--letter-projection <file|identity>` flag is also threaded from `compute_rhs` to the `--solve-collinear` subprocess (file paths are made absolute first, since the subprocess resolves relative paths against its own executable directory).
 - The driver scripts (`run_workflow.sh`, `run_projection.sh`, `run_solve.sh`) honor a `PROJECT=<name>` environment variable: setting `PROJECT=E7` makes them use `data_E7/` + `output_E7/`. With `PROJECT` unset they default to `data/` + `output/` (backward compatible).
 - `run_workflow.sh` auto-detects the condition tensor as `dlogmat_*.wxf` inside the data directory, so it generalizes to other symmetry groups without editing the script.
 
@@ -160,8 +160,8 @@ After running the bootstrap smoke test above (or `run_workflow.sh smoke`), the S
 ```bash
 ./bootstrap --project --symmetry collinear --target SEW_5p1
 ./bootstrap --solve-symmetry --symmetry cyclic --target SEW_5p1
-./compute_rhs --target SEW_3p1    # 2-loop (requires only E1)
-./compute_rhs --target SEW_5p1    # 3-loop (requires L=2 outputs)
+./compute_rhs --target SEW_3p1 --letter-projection output/collinear/colprojdiv_w1.wxf    # 2-loop (requires only E1)
+./compute_rhs --target SEW_5p1 --letter-projection output/collinear/colprojdiv_w1.wxf    # 3-loop (requires L=2 outputs)
 ```
 
 Or via the driver scripts:
@@ -171,7 +171,7 @@ Or via the driver scripts:
 ./run_solve.sh SEW_5p1        # cyclic, flip, parity
 ```
 
-A successful `compute_rhs --target SEW_5p1` run prints the unique solution (`c[0] = -24, c[1] = 2`), verifies all 32 constraints, and confirms `R3` is divergent-free (no entries at letters `{0, 1}`).
+A successful `compute_rhs --target SEW_5p1 --letter-projection output/collinear/colprojdiv_w1.wxf` run prints the unique solution (`c[0] = -24, c[1] = 2`), verifies all 32 constraints, and confirms `R3` is divergent-free (no entries at letters `{0, 1}`). Use `--letter-projection identity` to solve in the full letter space (no divergent projection).
 
 ## CLI
 
@@ -211,8 +211,9 @@ Symmetry invariant subspace solver:
 Collinear constraint solver:
 
 ```bash
-./bootstrap --solve-collinear --target SEW_5p1 --rhs output/3loop/boundary_3L.wxf --projection divergent
-./bootstrap --solve-collinear --target SEW_3p1 --rhs 0 --projection divergent   # empty RHS
+./bootstrap --solve-collinear --target SEW_5p1 --rhs output/3loop/boundary_3L.wxf --projection divergent \
+    --letter-projection output/collinear/colprojdiv_w1.wxf
+./bootstrap --solve-collinear --target SEW_3p1 --rhs 0 --projection divergent --letter-projection identity   # empty RHS, no letter projection
 ```
 
 Options:
@@ -222,11 +223,12 @@ Options:
 - `--induce`: reserved for future induced-transformation workflows;
 - `--project`: run the universal projection pipeline (requires `--symmetry`, `--target`);
 - `--solve-symmetry`: compute the invariant subspace of a target's projection (requires `--symmetry`, `--target`);
-- `--solve-collinear`: finite/divergent split + expansion + linear solve (requires `--target`, `--rhs`, `--projection`; `--basis` optional);
+- `--solve-collinear`: finite/divergent split + expansion + linear solve (requires `--target`, `--rhs`, `--projection`, `--letter-projection`; `--basis` optional);
 - `--symmetry <collinear|cyclic|flip|parity>`: symmetry name for `--project` / `--solve-symmetry`;
 - `--target <SEW_FpL|FEC_W|LEC_W>`: target name (e.g. `SEW_5p1`, `FEC_3`, `LEC_2`);
 - `--rhs <rhs.wxf>` or `--rhs 0`: RHS path for `--solve-collinear`; `"0"` means an all-zero RHS constructed in-memory. Missing → exit code 1;
 - `--projection <finite|divergent>`: which projection to apply in `--solve-collinear` (required — no default);
+- `--letter-projection <file|identity>`: letter-slot projection matrix for `--solve-collinear` (required — no default). A path (e.g. `output/collinear/colprojdiv_w1.wxf`) projects each 11-dim letter slot to a lower-dim subspace; the literal `identity` skips projection (solve in full letter space). Relative paths resolve against the executable directory;
 - `--basis <basis.wxf>`: expansion basis file (repeatable; highest weight first). Auto-detected as `first_w{N}_basis.wxf` if omitted;
 - `--data-dir <dir>`: data directory with seed files (default: `<exec_dir>/data`). Used by `--project`, `--solve-symmetry`, `--solve-collinear`; ignored by `--extend` / `--sew` (which use explicit `-c`/`-f`/`-l`/`-o` paths);
 - `--output-dir <dir>`: output directory (default: `<exec_dir>/output`). Same scope as `--data-dir`;
@@ -239,14 +241,16 @@ Thread count is chosen automatically by `SparseRREF`.
 ### RHS computation (`./compute_rhs`)
 
 ```bash
-./compute_rhs --target SEW_3p1    # 2-loop: computes E2, R2, boundary_2L
-./compute_rhs --target SEW_5p1    # 3-loop: computes E3, R3, boundary_3L (requires L=2 outputs)
-./compute_rhs --target SEW_5p1 --data-dir data_E7 --output-dir output_E7   # multi-project
+./compute_rhs --target SEW_3p1 --letter-projection output/collinear/colprojdiv_w1.wxf    # 2-loop: computes E2, R2, boundary_2L
+./compute_rhs --target SEW_5p1 --letter-projection output/collinear/colprojdiv_w1.wxf    # 3-loop: computes E3, R3, boundary_3L (requires L=2 outputs)
+./compute_rhs --target SEW_5p1 --letter-projection identity    # solve in full letter space (no divergent projection)
+./compute_rhs --target SEW_5p1 --letter-projection output/collinear/colprojdiv_w1.wxf --data-dir data_E7 --output-dir output_E7   # multi-project
 ```
 
 Options:
 
 - `--target <SEW_FpL>`: target SEW name (required). Loop order `L = (F+L)/2`; supported `L = 2..5`;
+- `--letter-projection <file|identity>`: letter-slot projection matrix (required — no default). A path (e.g. `output/collinear/colprojdiv_w1.wxf`) projects each 11-dim letter slot to a lower-dim subspace; `identity` skips projection (solve in full letter space). Relative paths resolve against the executable directory. Threaded through to the `--solve-collinear` subprocess;
 - `--data-dir <dir>`: data directory with seed files (default: `<exec_dir>/data`);
 - `--output-dir <dir>`: output directory (default: `<exec_dir>/output`);
 - `-h/--help`: print usage.

@@ -3,6 +3,77 @@
 All notable changes to this repository are documented here. Dates use
 ISO 8601 (YYYY-MM-DD) and the local timezone is Asia/Shanghai.
 
+## [2026-07-04] Configurable letter projection (--letter-projection)
+
+### Summary
+Replaced the hardcoded `colprojdiv_w1.wxf` divergent projection in
+`--solve-collinear` (and in `compute_rhs`, which delegates to it) with a
+required CLI flag `--letter-projection <file|identity>`. The flag is
+**not optional** — every `--solve-collinear` and `compute_rhs`
+invocation must pass it explicitly. The literal value `identity` skips
+projection (solve in the full 11-dim letter space); any other value is
+treated as a path to a projection matrix that is applied to each
+11-dim letter slot via `apply_colprojdiv_slots`. This makes the
+divergent-subspace projection user-selectable so the same solver can
+target other letter subspaces without code changes.
+
+### Modified
+- **`bootstrap.cpp`** — added `letter_projection` field to `args_t`;
+  `print_usage` now documents `--letter-projection <file|identity>`;
+  added parsing and a required-validation that exits with code 1 and a
+  helpful message if the flag is missing; the dispatch resolves
+  relative paths against the executable directory and passes the value
+  to `run_collinear_solver`.
+- **`solve_collinear.hpp`** — `run_collinear_solver` now takes a
+  `letter_projection` parameter (default `"identity"` for
+  backward-compatible call sites). Step 5b is conditional: if the value
+  is `"identity"`, prints a skip message and solves in the full letter
+  space; otherwise loads the projection file (throws if not found) and
+  applies it to both `A` and the boundary via `apply_colprojdiv_slots`.
+  The indicator-vector verification step (Step 6) is skipped when
+  `letter_projection == "identity"` because no divergent subspace is
+  defined.
+- **`compute_rhs.cpp`** — added `letter_projection` field to
+  `rhs_args_t`; updated `print_usage`; added parsing and
+  required-validation (exits 1 with help message if missing); relative
+  paths resolve against the executable directory (matching
+  `--data-dir` / `--output-dir`); passes the value to
+  `compute_rhs_for_loop`.
+- **`compute_rhs.hpp`** — `compute_rhs_for_loop` now takes a
+  `letter_projection` parameter; the recursive call and the
+  `./bootstrap --solve-collinear` subprocess invocation both pass it
+  through. The subprocess receives an **absolute** path (resolved via
+  `std::filesystem::absolute`) because the subprocess resolves relative
+  paths against its own executable directory. Step 8 (indicator-vector
+  verification) now branches: `identity` prints a skip message and
+  loads `R_L` only for an nnz report; otherwise loads the projection
+  matrix from `letter_projection` and runs the indicator-vector check
+  as before.
+- **`README.md`** — updated smoke-test examples and the CLI reference
+  for both `bootstrap --solve-collinear` and `compute_rhs` to include
+  `--letter-projection`; documented the flag in the options list and
+  the multi-project threading convention.
+- **`skills/04_collinear_solving.md`** — updated Purpose, CLI entry
+  point, Flags table, Step 3 description, Step 6 (skipped if
+  `identity`), Conventions (added required bullet), and Smoke test
+  (all examples specify `--letter-projection`, plus an identity
+  example).
+- **`skills/05_compute_rhs.md`** — updated CLI entry point, Flags
+  table, Step 4 (subprocess includes `--letter-projection`), Step 8
+  (skipped if `identity`), Conventions, and Smoke test.
+
+### Verified
+- `./compute_rhs --target SEW_3p1 --letter-projection output/collinear/colprojdiv_w1.wxf`:
+  L=2 succeeds, `R2` divergent-free (CRC32 `8f56256b`).
+- `./compute_rhs --target SEW_5p1 --letter-projection output/collinear/colprojdiv_w1.wxf`:
+  L=3 succeeds, `c[0] = -24, c[1] = 2`, `R3` divergent-free.
+- `./compute_rhs --target SEW_3p1 --letter-projection identity`: L=2
+  succeeds; `R2` CRC32 matches the `colprojdiv_w1` case (same result
+  at L=2 since the boundary has no divergent components).
+- Missing `--letter-projection` in either `compute_rhs` or
+  `bootstrap --solve-collinear` → exits with code 1 and a helpful
+  message showing example usage.
+
 ## [2026-07-04] --solve-collinear is now the complete collinear solver
 
 ### Summary

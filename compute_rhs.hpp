@@ -451,6 +451,7 @@ void compute_rhs_for_loop(
 	size_t L,
 	const std::filesystem::path& data_dir,
 	const std::filesystem::path& output_dir,
+	const std::string& letter_projection,
 	const field_t& F, rref_option_t& opt) {
 
 	thread_pool* pool = &(opt->pool);
@@ -502,7 +503,7 @@ void compute_rhs_for_loop(
 			R_list[l] = sparse_tensor<T, index_t, SPARSE_COO>(std::move(R_csr));
 		} else {
 			std::cout << "L=" << l << ": computing recursively..." << std::endl;
-			compute_rhs_for_loop<T, index_t>(l, data_dir, output_dir, F, opt);
+			compute_rhs_for_loop<T, index_t>(l, data_dir, output_dir, letter_projection, F, opt);
 			// Reload
 			auto E_csr = projection_read_tensor<T, index_t>(E_l_path, F, pool);
 			auto R_csr = projection_read_tensor<T, index_t>(R_l_path, F, pool);
@@ -548,10 +549,18 @@ void compute_rhs_for_loop(
 	{
 		auto abs_data = std::filesystem::absolute(data_dir);
 		auto abs_output = std::filesystem::absolute(output_dir);
+		// Resolve letter_projection: "identity" passes through; a relative path
+		// must be made absolute because the bootstrap subprocess resolves relative
+		// paths against its own executable directory.
+		std::string letter_proj_arg = letter_projection;
+		if (letter_proj_arg != "identity") {
+			letter_proj_arg = std::filesystem::absolute(letter_proj_arg).string();
+		}
 		std::string cmd = "./bootstrap --solve-collinear"
 			+ std::string(" --target ") + sew_name
 			+ std::string(" --rhs ") + std::filesystem::absolute(boundary_path).string()
 			+ std::string(" --projection divergent")
+			+ std::string(" --letter-projection ") + letter_proj_arg
 			+ std::string(" --data-dir ") + abs_data.string()
 			+ std::string(" --output-dir ") + abs_output.string();
 		std::cout << "   [bootstrap] " << cmd << std::endl;
@@ -630,73 +639,85 @@ void compute_rhs_for_loop(
 	// match; R_L is the finite remainder R* if and only if no divergent letter appears
 	// in its support. Method: collect all distinct letter indices from R_L's nonzero
 	// entries, form an 11-dim indicator vector v (v[k]=1 if letter k appears), project
-	// v with colprojdiv_w1 (11, m_div). If the projection is zero → R_L = R*.
+	// v with the --letter-projection matrix (11, m_div). If the projection is zero →
+	// R_L = R*.
+	// If --letter-projection identity: this check is skipped (no divergent subspace
+	// is defined — the solve was done in the full letter space and the constraint is
+	// c.A = boundary at all matching positions, not just the divergent subspace).
 	std::cout << "== Verifying R* is divergent-free (indicator-vector method) ==" << std::endl;
 
-	// Load colprojdiv_w1 for the indicator-vector projection
-	auto colprojdiv_w1_path = collinear_dir / "colprojdiv_w1.wxf";
-	if (!std::filesystem::exists(colprojdiv_w1_path)) {
-		throw std::runtime_error("compute_rhs: colprojdiv_w1 not found: " + colprojdiv_w1_path.string());
-	}
-	auto colprojdiv_w1_csr = projection_read_tensor<T, index_t>(colprojdiv_w1_path, F, pool);
-	sparse_tensor<T, index_t, SPARSE_COO> colprojdiv_w1_coo(std::move(colprojdiv_w1_csr));
-	auto R_L_verify_csr = projection_read_tensor<T, index_t>(R_L_path, F, pool);
-	sparse_tensor<T, index_t, SPARSE_COO> R_L_verify(std::move(R_L_verify_csr));
-
-	// Collect distinct letter indices from R_L's nonzero entries
-	std::set<size_t> letter_indices;
-	size_t r_rank = R_L_verify.rank();
-	for (size_t i = 0; i < R_L_verify.nnz(); i++) {
-		auto coords = R_L_verify.index(i);  // pointer to r_rank index_t values
-		for (size_t d = 0; d < r_rank; d++) {
-			letter_indices.insert(static_cast<size_t>(coords[d]));
+	if (letter_projection == "identity") {
+		auto R_L_verify_csr_id = projection_read_tensor<T, index_t>(R_L_path, F, pool);
+		std::cout << "   [SKIP] --letter-projection identity: no divergent subspace defined." << std::endl;
+		std::cout << "   R" << L << " nnz=" << R_L_verify_csr_id.nnz() << " (constraint enforced at "
+		          << "matching positions only)." << std::endl;
+	} else {
+		// Load letter-projection matrix for the indicator-vector projection
+		std::filesystem::path letter_proj_path(letter_projection);
+		if (!std::filesystem::exists(letter_proj_path)) {
+			throw std::runtime_error("compute_rhs: --letter-projection file not found: "
+				+ letter_proj_path.string());
 		}
-	}
-	std::cout << "   R_L nnz=" << R_L_verify.nnz()
-	          << ", distinct letter indices: " << letter_indices.size() << std::endl;
-	std::cout << "   Letters appearing: {";
-	{
-		bool first = true;
+		auto letter_proj_csr = projection_read_tensor<T, index_t>(letter_proj_path, F, pool);
+		sparse_tensor<T, index_t, SPARSE_COO> letter_proj_coo(std::move(letter_proj_csr));
+		auto R_L_verify_csr2 = projection_read_tensor<T, index_t>(R_L_path, F, pool);
+		sparse_tensor<T, index_t, SPARSE_COO> R_L_verify(std::move(R_L_verify_csr2));
+
+		// Collect distinct letter indices from R_L's nonzero entries
+		std::set<size_t> letter_indices;
+		size_t r_rank = R_L_verify.rank();
+		for (size_t i = 0; i < R_L_verify.nnz(); i++) {
+			auto coords = R_L_verify.index(i);  // pointer to r_rank index_t values
+			for (size_t d = 0; d < r_rank; d++) {
+				letter_indices.insert(static_cast<size_t>(coords[d]));
+			}
+		}
+		std::cout << "   R_L nnz=" << R_L_verify.nnz()
+		          << ", distinct letter indices: " << letter_indices.size() << std::endl;
+		std::cout << "   Letters appearing: {";
+		{
+			bool first = true;
+			for (auto idx : letter_indices) {
+				if (!first) std::cout << ",";
+				std::cout << idx;
+				first = false;
+			}
+		}
+		std::cout << "}" << std::endl;
+
+		// Build indicator vector (rank-1 COO tensor, dim 11)
+		sparse_tensor<T, index_t, SPARSE_COO> indicator({11});
+		indicator.resize(letter_indices.size());
+		size_t pos = 0;
 		for (auto idx : letter_indices) {
-			if (!first) std::cout << ",";
-			std::cout << idx;
-			first = false;
+			indicator.index(pos)[0] = static_cast<index_t>(idx);
+			indicator.val(pos) = T(1);
+			pos++;
 		}
-	}
-	std::cout << "}" << std::endl;
+		indicator.canonicalize();
+		indicator.sort_indices();
+		std::cout << "   Indicator vector (11-dim): nnz=" << indicator.nnz() << std::endl;
 
-	// Build indicator vector (rank-1 COO tensor, dim 11)
-	sparse_tensor<T, index_t, SPARSE_COO> indicator({11});
-	indicator.resize(letter_indices.size());
-	size_t pos = 0;
-	for (auto idx : letter_indices) {
-		indicator.index(pos)[0] = static_cast<index_t>(idx);
-		indicator.val(pos) = T(1);
-		pos++;
-	}
-	indicator.canonicalize();
-	indicator.sort_indices();
-	std::cout << "   Indicator vector (11-dim): nnz=" << indicator.nnz() << std::endl;
+		// Project: indicator (11) · letter_proj (11, m_div) → (m_div,)
+		auto div_check = tensor_contract(indicator, letter_proj_coo, 0, 0, F, pool);
+		std::cout << "   Projection to divergent subspace: rank=" << div_check.rank()
+		          << " dims=";
+		for (size_t i = 0; i < div_check.rank(); i++) {
+			std::cout << div_check.dim(i) << (i + 1 < div_check.rank() ? "x" : "");
+		}
+		std::cout << " nnz=" << div_check.nnz() << std::endl;
 
-	// Project: indicator (11) · colprojdiv_w1 (11, m_div) → (m_div,)
-	auto div_check = tensor_contract(indicator, colprojdiv_w1_coo, 0, 0, F, pool);
-	std::cout << "   Projection to divergent subspace: rank=" << div_check.rank()
-	          << " dims=";
-	for (size_t i = 0; i < div_check.rank(); i++) {
-		std::cout << div_check.dim(i) << (i + 1 < div_check.rank() ? "x" : "");
+		if (div_check.nnz() != 0) {
+			std::cout << "========================================" << std::endl;
+			std::cout << "FAILED: R* contains divergent letters." << std::endl;
+			std::cout << "   The indicator vector projected to a non-zero vector in the" << std::endl;
+			std::cout << "   divergent subspace — R_L is NOT free of divergent letters." << std::endl;
+			std::cout << "========================================" << std::endl;
+			throw std::runtime_error("compute_rhs: R* divergent-letter check failed at L="
+				+ std::to_string(L));
+		}
+		std::cout << "   [OK] R* is free of divergent letters — R_L = R*" << std::endl;
 	}
-	std::cout << " nnz=" << div_check.nnz() << std::endl;
-
-	if (div_check.nnz() != 0) {
-		std::cout << "========================================" << std::endl;
-		std::cout << "FAILED: R* contains divergent letters." << std::endl;
-		std::cout << "   The indicator vector projected to a non-zero vector in the" << std::endl;
-		std::cout << "   divergent subspace — R_L is NOT free of divergent letters." << std::endl;
-		std::cout << "========================================" << std::endl;
-		throw std::runtime_error("compute_rhs: R* divergent-letter check failed at L="
-			+ std::to_string(L));
-	}
-	std::cout << "   [OK] R* is free of divergent letters — R_L = R*" << std::endl;
 
 	std::cout << "========================================" << std::endl;
 	std::cout << "Done: L=" << L << std::endl;
