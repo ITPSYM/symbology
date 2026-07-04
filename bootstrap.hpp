@@ -68,6 +68,11 @@ inline uint32_t get_file_crc32(const std::filesystem::path& filename) {
 	) ^ 0xFFFFFFFF;
 }
 
+inline void print_crc32(const std::string& label, const std::filesystem::path& path) {
+	auto crc = get_file_crc32(path);
+	std::cout << "CRC32 of " << label << " : " << std::hex << crc << std::dec << std::endl;
+}
+
 template <typename index_t>
 void vec_cancel_divisor(sparse_vec<rat_t, index_t>& vec) {
 	// RREF over QQ leaves rational rows; archive bootstrap output stores

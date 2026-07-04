@@ -73,3 +73,6 @@ SparseRREF/
 
 # Local reference files (must not be pushed)
 .local/
+
+# macOS filesystem metadata
+.DS_Store

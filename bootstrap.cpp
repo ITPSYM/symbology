@@ -1,4 +1,5 @@
 #include "bootstrap.hpp"
+#include "projection.hpp"
 
 #include <cstdlib>
 
@@ -9,7 +10,8 @@ enum class bootstrap_mode_t {
 	none,
 	extend,
 	sew,
-	induce
+	induce,
+	project
 };
 
 struct args_t {
@@ -19,6 +21,8 @@ struct args_t {
 	std::filesystem::path last;
 	std::filesystem::path transform;
 	std::filesystem::path output;
+	std::string symmetry;   // --project: collinear | cyclic | flip | parity
+	std::string target;     // --project: e.g. SEW_5p1
 };
 
 // bootstrap.cpp owns only the command-line contract and WXF I/O.
@@ -28,6 +32,7 @@ void print_usage(const char* program) {
 	std::cerr << "  " << program << " --extend -c <condition.wxf> -f <FEC_in.wxf> -o <FEC_out.wxf>" << std::endl;
 	std::cerr << "  " << program << " --extend -c <condition.wxf> -l <LEC_in.wxf> -o <LEC_out.wxf>" << std::endl;
 	std::cerr << "  " << program << " --sew -c <condition.wxf> -f <FEC.wxf> -l <LEC.wxf> -o <SEW.wxf>" << std::endl;
+	std::cerr << "  " << program << " --project --symmetry <collinear|cyclic|flip|parity> --target <SEW_FpL>" << std::endl;
 }
 
 std::string take_value(int& i, int argc, char* argv[], const std::string& flag) {
@@ -58,6 +63,15 @@ args_t parse_args(int argc, char* argv[]) {
 		else if (arg == "--induce") {
 			set_mode(args, bootstrap_mode_t::induce);
 		}
+		else if (arg == "--project") {
+			set_mode(args, bootstrap_mode_t::project);
+		}
+		else if (arg == "--symmetry") {
+			args.symmetry = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "--target") {
+			args.target = take_value(i, argc, argv, arg);
+		}
 		else if (arg == "-c" || arg == "--condition") {
 			args.condition = take_value(i, argc, argv, arg);
 		}
@@ -86,10 +100,23 @@ args_t parse_args(int argc, char* argv[]) {
 
 void validate_args(const args_t& args) {
 	if (args.mode == bootstrap_mode_t::none) {
-		throw std::runtime_error("Missing mode: use --extend, --sew, or --induce.");
+		throw std::runtime_error("Missing mode: use --extend, --sew, --induce, or --project.");
 	}
 	if (args.mode == bootstrap_mode_t::induce) {
 		throw std::runtime_error("--induce is reserved for a future workflow stage.");
+	}
+	if (args.mode == bootstrap_mode_t::project) {
+		if (args.symmetry.empty()) {
+			throw std::runtime_error("--project requires --symmetry <collinear|cyclic|flip|parity>.");
+		}
+		if (args.target.empty()) {
+			throw std::runtime_error("--project requires --target <SEW_FpL> (e.g. SEW_5p1).");
+		}
+		// Validate symmetry name early via get_symmetry_info (throws on unknown).
+		get_symmetry_info(args.symmetry);
+		// Validate target name early via parse_target (throws on bad format).
+		parse_target(args.target);
+		return;
 	}
 	if (args.condition.empty()) {
 		throw std::runtime_error("Missing condition file: use -c/--condition.");
@@ -121,11 +148,6 @@ std::filesystem::path resolve_path(const std::filesystem::path& base, const std:
 		return path;
 	}
 	return base / path;
-}
-
-void print_crc32(const std::string& label, const std::filesystem::path& path) {
-	auto crc = get_file_crc32(path);
-	std::cout << "CRC32 of " << label << " : " << std::hex << crc << std::dec << std::endl;
 }
 
 // Files are read as CSR tensors and moved into bootstrap.hpp, where each
@@ -184,11 +206,6 @@ int main(int argc, char* argv[]) {
 			base = std::filesystem::current_path();
 		}
 
-		std::filesystem::path condition_path = resolve_path(base, args.condition);
-		std::filesystem::path first_path = resolve_path(base, args.first);
-		std::filesystem::path last_path = resolve_path(base, args.last);
-		std::filesystem::path output_path = resolve_path(base, args.output);
-
 		std::cout << "threads: " << pool->get_thread_count() << std::endl;
 		auto local_time = std::chrono::zoned_time{
 			std::chrono::current_zone(),
@@ -198,31 +215,44 @@ int main(int argc, char* argv[]) {
 
 		Timer total_timer;
 		total_timer.start();
-		auto dlogmat = read_tensor(condition_path, F, pool);
 
-		// Each mode consumes dlogmat exactly once, matching the moved-tensor API
-		// in bootstrap.hpp and avoiding accidental large tensor copies.
-		if (args.mode == bootstrap_mode_t::extend && !args.first.empty()) {
-			std::cout << "Symbol bootstrap: " << first_path.string() << " -> " << output_path.string()
-					  << " @ " << condition_path.string() << std::endl;
-			auto FEC = read_tensor(first_path, F, pool);
-			auto output = extend_forward(std::move(dlogmat), std::move(FEC), F, opt);
-			write_tensor(output_path, std::move(output));
+		if (args.mode == bootstrap_mode_t::project) {
+			// --project runs its own recursive pipeline (no condition/first/last/output).
+			run_projection_pipeline<scalar_t, index_t>(
+				args.symmetry, args.target, base, F, opt);
 		}
-		else if (args.mode == bootstrap_mode_t::extend && !args.last.empty()) {
-			std::cout << "Symbol bootstrap: " << last_path.string() << " -> " << output_path.string()
-					  << " @ " << condition_path.string() << std::endl;
-			auto LEC = read_tensor(last_path, F, pool);
-			auto output = extend_backward(std::move(dlogmat), std::move(LEC), F, opt);
-			write_tensor(output_path, std::move(output));
-		}
-		else if (args.mode == bootstrap_mode_t::sew) {
-			std::cout << "Symbol bootstrap: " << first_path.string() << " + " << last_path.string()
-					  << " -> " << output_path.string() << " @ " << condition_path.string() << std::endl;
-			auto FEC = read_tensor(first_path, F, pool);
-			auto LEC = read_tensor(last_path, F, pool);
-			auto output = sew_first_last(std::move(dlogmat), std::move(FEC), std::move(LEC), F, opt);
-			write_tensor(output_path, std::move(output));
+		else {
+			std::filesystem::path condition_path = resolve_path(base, args.condition);
+			std::filesystem::path first_path = resolve_path(base, args.first);
+			std::filesystem::path last_path = resolve_path(base, args.last);
+			std::filesystem::path output_path = resolve_path(base, args.output);
+
+			auto dlogmat = read_tensor(condition_path, F, pool);
+
+			// Each mode consumes dlogmat exactly once, matching the moved-tensor API
+			// in bootstrap.hpp and avoiding accidental large tensor copies.
+			if (args.mode == bootstrap_mode_t::extend && !args.first.empty()) {
+				std::cout << "Symbol bootstrap: " << first_path.string() << " -> " << output_path.string()
+						  << " @ " << condition_path.string() << std::endl;
+				auto FEC = read_tensor(first_path, F, pool);
+				auto output = extend_forward(std::move(dlogmat), std::move(FEC), F, opt);
+				write_tensor(output_path, std::move(output));
+			}
+			else if (args.mode == bootstrap_mode_t::extend && !args.last.empty()) {
+				std::cout << "Symbol bootstrap: " << last_path.string() << " -> " << output_path.string()
+						  << " @ " << condition_path.string() << std::endl;
+				auto LEC = read_tensor(last_path, F, pool);
+				auto output = extend_backward(std::move(dlogmat), std::move(LEC), F, opt);
+				write_tensor(output_path, std::move(output));
+			}
+			else if (args.mode == bootstrap_mode_t::sew) {
+				std::cout << "Symbol bootstrap: " << first_path.string() << " + " << last_path.string()
+						  << " -> " << output_path.string() << " @ " << condition_path.string() << std::endl;
+				auto FEC = read_tensor(first_path, F, pool);
+				auto LEC = read_tensor(last_path, F, pool);
+				auto output = sew_first_last(std::move(dlogmat), std::move(FEC), std::move(LEC), F, opt);
+				write_tensor(output_path, std::move(output));
+			}
 		}
 
 		total_timer.stop();
