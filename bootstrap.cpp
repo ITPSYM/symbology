@@ -1,6 +1,7 @@
 #include "bootstrap.hpp"
 #include "projection.hpp"
 #include "solve_symmetry.hpp"
+#include "solve_collinear.hpp"
 
 #include <cstdlib>
 
@@ -13,7 +14,8 @@ enum class bootstrap_mode_t {
 	sew,
 	induce,
 	project,
-	solve_symmetry
+	solve_symmetry,
+	solve_collinear
 };
 
 struct args_t {
@@ -24,7 +26,11 @@ struct args_t {
 	std::filesystem::path transform;
 	std::filesystem::path output;
 	std::string symmetry;   // --project: collinear | cyclic | flip | parity
-	std::string target;     // --project: e.g. SEW_5p1
+	std::string target;     // --project/--solve-*: e.g. SEW_5p1
+	// --solve-collinear:
+	std::filesystem::path rhs;
+	std::string projection_type;  // "finite" or "divergent"
+	std::vector<std::filesystem::path> basis_paths;  // expansion bases (highest weight first)
 };
 
 // bootstrap.cpp owns only the command-line contract and WXF I/O.
@@ -36,6 +42,7 @@ void print_usage(const char* program) {
 	std::cerr << "  " << program << " --sew -c <condition.wxf> -f <FEC.wxf> -l <LEC.wxf> -o <SEW.wxf>" << std::endl;
 	std::cerr << "  " << program << " --project --symmetry <collinear|cyclic|flip|parity> --target <SEW_FpL|FEC_W|LEC_W>" << std::endl;
 	std::cerr << "  " << program << " --solve-symmetry --symmetry <cyclic|flip|parity> --target <SEW_FpL|FEC_W|LEC_W>" << std::endl;
+	std::cerr << "  " << program << " --solve-collinear --target <SEW_FpL|FEC_W> --rhs <rhs.wxf> --projection <finite|divergent> [--basis <basis.wxf> ...]" << std::endl;
 }
 
 std::string take_value(int& i, int argc, char* argv[], const std::string& flag) {
@@ -72,11 +79,23 @@ args_t parse_args(int argc, char* argv[]) {
 		else if (arg == "--solve-symmetry") {
 			set_mode(args, bootstrap_mode_t::solve_symmetry);
 		}
+		else if (arg == "--solve-collinear") {
+			set_mode(args, bootstrap_mode_t::solve_collinear);
+		}
 		else if (arg == "--symmetry") {
 			args.symmetry = take_value(i, argc, argv, arg);
 		}
 		else if (arg == "--target") {
 			args.target = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "--rhs") {
+			args.rhs = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "--projection") {
+			args.projection_type = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "--basis") {
+			args.basis_paths.push_back(take_value(i, argc, argv, arg));
 		}
 		else if (arg == "-c" || arg == "--condition") {
 			args.condition = take_value(i, argc, argv, arg);
@@ -132,6 +151,23 @@ void validate_args(const args_t& args) {
 			throw std::runtime_error("--solve-symmetry requires --target <SEW_FpL> (e.g. SEW_5p1).");
 		}
 		get_symmetry_info(args.symmetry);
+		parse_target(args.target);
+		return;
+	}
+	if (args.mode == bootstrap_mode_t::solve_collinear) {
+		if (args.target.empty()) {
+			throw std::runtime_error("--solve-collinear requires --target <SEW_FpL|FEC_W> (e.g. SEW_5p1).");
+		}
+		if (args.rhs.empty()) {
+			throw std::runtime_error("--solve-collinear requires --rhs <rhs.wxf>.");
+		}
+		if (args.projection_type.empty()) {
+			throw std::runtime_error("--solve-collinear requires --projection <finite|divergent>.");
+		}
+		if (args.projection_type != "finite" && args.projection_type != "divergent") {
+			throw std::runtime_error("--projection must be 'finite' or 'divergent', got: " + args.projection_type);
+		}
+		// Validate target name early via parse_target (throws on bad format).
 		parse_target(args.target);
 		return;
 	}
@@ -242,6 +278,48 @@ int main(int argc, char* argv[]) {
 			// --solve-symmetry: compute invariant space of the target's projection.
 			run_symmetry_solver<scalar_t, index_t>(
 				args.symmetry, args.target, base, F, opt);
+		}
+		else if (args.mode == bootstrap_mode_t::solve_collinear) {
+			// --solve-collinear: finite/divergent split + expansion + linear solve.
+			auto target = parse_target(args.target);
+
+			std::filesystem::path data_dir = base / "data";
+			std::filesystem::path output_dir = base / "output";
+			auto collinear_dir = output_dir / "collinear";
+
+			// Determine target weight and target basis path
+			size_t target_weight;
+			std::filesystem::path target_basis_path;
+			if (target.kind == target_kind_t::SEW) {
+				target_weight = target.fec_weight + target.lec_weight;
+				target_basis_path = collinear_dir / (target.name + "_basis.wxf");
+			} else if (target.kind == target_kind_t::FEC) {
+				target_weight = target.fec_weight;
+				target_basis_path = collinear_dir / ("first_w" + std::to_string(target.fec_weight) + "_basis.wxf");
+			} else {
+				throw std::runtime_error("--solve-collinear: LEC targets not yet supported");
+			}
+
+			// Auto-detect chain base paths (lowest weight first) for projection computation
+			auto chain_base_paths = detect_chain_base_paths(target, output_dir);
+
+			// Expansion bases (highest weight first): either provided by user,
+			// or auto-detected from the standard naming convention.
+			std::vector<std::filesystem::path> expansion_bases = args.basis_paths;
+			if (expansion_bases.empty()) {
+				// Auto-detect: weights (target_weight-1) down to 2.
+				// Use signed counter because size_t would wrap past 0.
+				for (long w = static_cast<long>(target_weight) - 1; w >= 2; w--) {
+					expansion_bases.push_back(collinear_dir / ("first_w" + std::to_string(w) + "_basis.wxf"));
+				}
+			}
+
+			std::filesystem::path rhs_path = resolve_path(base, args.rhs);
+
+			run_collinear_solver<scalar_t, index_t>(
+				target_basis_path, rhs_path, args.projection_type,
+				expansion_bases, chain_base_paths,
+				target_weight, data_dir, output_dir, F, opt);
 		}
 		else {
 			std::filesystem::path condition_path = resolve_path(base, args.condition);
