@@ -35,33 +35,6 @@ sparse_tensor<T, index_t, SPARSE_CSR> projection_read_tensor(
 template <typename T, typename index_t>
 void projection_write_tensor(
 	const std::filesystem::path& path,
-	sparse_tensor<T, index_t, SPARSE_COO>&& tensor_coo,
-	thread_pool* pool) {
-	sparse_tensor<T, index_t, SPARSE_CSR> csr_tensor(std::move(tensor_coo), pool);
-	if (!path.parent_path().empty()) {
-		std::filesystem::create_directories(path.parent_path());
-	}
-	std::cout << "Writing file " << path.string() << " ..." << std::endl;
-	Timer timer;
-	timer.start();
-	auto u8arr = sparse_tensor_write_wxf(csr_tensor);
-	std::ofstream ofs(path, std::ios::binary);
-	if (!ofs) {
-		throw std::runtime_error("Cannot write file: " + path.string());
-	}
-	ofs.write(reinterpret_cast<const char*>(u8arr.data()), u8arr.size());
-	ofs.close();
-	u8arr.clear();
-	u8arr.shrink_to_fit();
-	timer.stop();
-	std::cout << "** Write time: " << timer.milliseconds() << " ms" << std::endl;
-	print_crc32(path.string(), path);
-}
-
-// Overload for CSR tensors (no conversion needed)
-template <typename T, typename index_t>
-void projection_write_tensor(
-	const std::filesystem::path& path,
 	sparse_tensor<T, index_t, SPARSE_CSR>&& tensor_csr,
 	thread_pool* /*pool*/) {
 	if (!path.parent_path().empty()) {
@@ -130,7 +103,7 @@ sparse_tensor<T, index_t, SPARSE_COO> tenary_contract(
 // seed is FEC_1 (7, 1, 42) or LEC_1 (14, 42, 1).
 
 template <typename T, typename index_t>
-sparse_tensor<T, index_t, SPARSE_COO> compute_weight1_projection(
+sparse_tensor<T, index_t, SPARSE_CSR> compute_weight1_projection(
 	sparse_tensor<T, index_t, SPARSE_CSR>&& seed_csr,
 	sparse_tensor<T, index_t, SPARSE_CSR>&& map42_csr,
 	bool is_collinear,
@@ -163,15 +136,18 @@ sparse_tensor<T, index_t, SPARSE_COO> compute_weight1_projection(
 	// C = seed . map42
 	auto C = tensor_contract(seed, map42, 1, 0, F, pool);
 
+	sparse_tensor<T, index_t, SPARSE_COO> result_coo;
 	if (is_collinear) {
-		std::cout << "   Collinear w1 result: " << C.dim(0) << "x" << C.dim(1) << std::endl;
-		return C;
+		result_coo = std::move(C);
+		std::cout << "   Collinear w1 result: " << result_coo.dim(0) << "x" << result_coo.dim(1) << std::endl;
 	} else {
 		// Symmetry: result = C . seed^T = tensor_contract(C, seed, 1, 1)
-		auto result = tensor_contract(C, seed, 1, 1, F, pool);
-		std::cout << "   Symmetry w1 result: " << result.dim(0) << "x" << result.dim(1) << std::endl;
-		return result;
+		result_coo = tensor_contract(C, seed, 1, 1, F, pool);
+		std::cout << "   Symmetry w1 result: " << result_coo.dim(0) << "x" << result_coo.dim(1) << std::endl;
 	}
+
+	// Convert COO -> CSR for output, matching bootstrap.hpp convention.
+	return sparse_tensor<T, index_t, SPARSE_CSR>(std::move(result_coo), pool);
 }
 
 // ========== Transformation extraction (shared col_weight + is_back_sub trick) ==========
@@ -433,6 +409,46 @@ inline symmetry_info_t get_symmetry_info(const std::string& symmetry) {
 
 // ========== Pipeline orchestration ==========
 
+// Record of one output file: name, dimensions, nnz, CRC32.
+struct file_record_t {
+	std::string filename;
+	std::vector<size_t> dims;
+	size_t nnz;
+	uint32_t crc32;
+};
+
+// Helper: record a file that was just written.
+inline file_record_t make_file_record(
+	const std::filesystem::path& path,
+	const std::vector<size_t>& dims, size_t nnz) {
+	return { path.filename().string(), dims, nnz, get_file_crc32(path) };
+}
+
+// Helper: write summary.txt recording all produced files.
+inline void write_summary(
+	const std::filesystem::path& sym_dir,
+	const std::string& symmetry_name, const std::string& target_name,
+	const std::vector<file_record_t>& records) {
+	std::ofstream ofs(sym_dir / "summary.txt");
+	if (!ofs) return;
+	ofs << "# Projection summary" << std::endl;
+	ofs << "# symmetry: " << symmetry_name << std::endl;
+	ofs << "# target: " << target_name << std::endl;
+	ofs << "#" << std::endl;
+	ofs << "# filename                       dims                nnz      CRC32" << std::endl;
+	for (const auto& r : records) {
+		std::string dims_str;
+		for (size_t i = 0; i < r.dims.size(); i++) {
+			dims_str += std::to_string(r.dims[i]);
+			if (i + 1 < r.dims.size()) dims_str += "x";
+		}
+		ofs << std::left << std::setw(32) << r.filename
+		    << std::setw(20) << dims_str
+		    << std::setw(9) << r.nnz
+		    << std::hex << r.crc32 << std::dec << std::endl;
+	}
+}
+
 template <typename T, typename index_t>
 void run_projection_pipeline(
 	const std::string& symmetry_name,
@@ -458,6 +474,8 @@ void run_projection_pipeline(
 	std::filesystem::path sym_dir = output_dir / sym.name;
 	std::filesystem::create_directories(sym_dir);
 
+	std::vector<file_record_t> records;
+
 	// Read seed map (reused for every weight's 42-axis contraction)
 	auto seed_map = projection_read_tensor<T, index_t>(data_dir / sym.seed_file, F, pool);
 	std::cout << "--- Seed map ---" << std::endl;
@@ -478,7 +496,9 @@ void run_projection_pipeline(
 			std::move(FEC_1), std::move(seed_copy), sym.is_collinear, F, pool);
 		std::cout << "--- first@w1 result ---" << std::endl;
 		print_tensor_info(first_w1);
+		auto dims = first_w1.dims(); auto nnz = first_w1.nnz();
 		projection_write_tensor(sym_dir / "first_w1.wxf", std::move(first_w1), pool);
+		records.push_back(make_file_record(sym_dir / "first_w1.wxf", dims, nnz));
 	}
 
 	// *last@w1 from LEC_1
@@ -488,7 +508,9 @@ void run_projection_pipeline(
 			std::move(LEC_1), std::move(seed_map), sym.is_collinear, F, pool);
 		std::cout << "--- last@w1 result ---" << std::endl;
 		print_tensor_info(last_w1);
+		auto dims = last_w1.dims(); auto nnz = last_w1.nnz();
 		projection_write_tensor(sym_dir / "last_w1.wxf", std::move(last_w1), pool);
+		records.push_back(make_file_record(sym_dir / "last_w1.wxf", dims, nnz));
 	}
 
 	// ===== FEC chain: weights 2..fec_weight =====
@@ -509,16 +531,22 @@ void run_projection_pipeline(
 
 		std::cout << "--- first@w" << w << " ---" << std::endl;
 		print_tensor_info(result.projection);
+		auto p_dims = result.projection.dims(); auto p_nnz = result.projection.nnz();
 		projection_write_tensor(
 			sym_dir / ("first_w" + std::to_string(w) + ".wxf"),
 			std::move(result.projection), pool);
+		records.push_back(make_file_record(
+			sym_dir / ("first_w" + std::to_string(w) + ".wxf"), p_dims, p_nnz));
 
 		if (sym.is_collinear) {
 			std::cout << "--- first@w" << w << " basis ---" << std::endl;
 			print_tensor_info(result.basis);
+			auto b_dims = result.basis.dims(); auto b_nnz = result.basis.nnz();
 			projection_write_tensor(
 				sym_dir / ("first_w" + std::to_string(w) + "_basis.wxf"),
 				std::move(result.basis), pool);
+			records.push_back(make_file_record(
+				sym_dir / ("first_w" + std::to_string(w) + "_basis.wxf"), b_dims, b_nnz));
 		}
 	}
 
@@ -540,16 +568,22 @@ void run_projection_pipeline(
 
 		std::cout << "--- last@w" << w << " ---" << std::endl;
 		print_tensor_info(result.projection);
+		auto p_dims = result.projection.dims(); auto p_nnz = result.projection.nnz();
 		projection_write_tensor(
 			sym_dir / ("last_w" + std::to_string(w) + ".wxf"),
 			std::move(result.projection), pool);
+		records.push_back(make_file_record(
+			sym_dir / ("last_w" + std::to_string(w) + ".wxf"), p_dims, p_nnz));
 
 		if (sym.is_collinear) {
 			std::cout << "--- last@w" << w << " basis ---" << std::endl;
 			print_tensor_info(result.basis);
+			auto b_dims = result.basis.dims(); auto b_nnz = result.basis.nnz();
 			projection_write_tensor(
 				sym_dir / ("last_w" + std::to_string(w) + "_basis.wxf"),
 				std::move(result.basis), pool);
+			records.push_back(make_file_record(
+				sym_dir / ("last_w" + std::to_string(w) + "_basis.wxf"), b_dims, b_nnz));
 		}
 	}
 
@@ -571,20 +605,29 @@ void run_projection_pipeline(
 
 	std::cout << "--- SEW projection ---" << std::endl;
 	print_tensor_info(result.projection);
+	auto p_dims = result.projection.dims(); auto p_nnz = result.projection.nnz();
 	projection_write_tensor(
 		sym_dir / (target.name + ".wxf"),
 		std::move(result.projection), pool);
+	records.push_back(make_file_record(
+		sym_dir / (target.name + ".wxf"), p_dims, p_nnz));
 
 	if (sym.is_collinear) {
 		std::cout << "--- SEW basis ---" << std::endl;
 		print_tensor_info(result.basis);
+		auto b_dims = result.basis.dims(); auto b_nnz = result.basis.nnz();
 		projection_write_tensor(
 			sym_dir / (target.name + "_basis.wxf"),
 			std::move(result.basis), pool);
+		records.push_back(make_file_record(
+			sym_dir / (target.name + "_basis.wxf"), b_dims, b_nnz));
 	}
 
+	// Write summary
+	write_summary(sym_dir, sym.name, target.name, records);
 	std::cout << std::endl << "========================================" << std::endl;
 	std::cout << "Pipeline complete." << std::endl;
 	std::cout << "Results in: " << sym_dir.string() << std::endl;
+	std::cout << "Summary: " << (sym_dir / "summary.txt").string() << std::endl;
 	std::cout << "========================================" << std::endl;
 }
