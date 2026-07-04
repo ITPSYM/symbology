@@ -39,7 +39,7 @@ working on a module.
 | Projection (collinear) | `SEW_5p1` | Verified (basis dims `2 × 546 × 11`, rank 7 expansion) |
 | Projection (symmetries) | `SEW_5p1` cyclic/flip/parity | Verified (all three are identity `diag(1,1)` for `E6`) |
 | Symmetry solving | `SEW_5p1` cyclic/flip/parity | Verified (invariant subspace == full space) |
-| Collinear solving | `SEW_3p1` (L=2) | Verified (unique solution `c[0] = 8`, 44 constraints, `R2` divergent-free) |
+| Collinear solving | `SEW_3p1` (L=2) | Verified (unique solution `c[0] = 8`, 8 constraints, `R2` divergent-free) |
 | Collinear solving | `SEW_5p1` (L=3) | Verified (unique solution `c[0] = -24, c[1] = 2`, 32 constraints, `R3` divergent-free) |
 | Compute RHS | L=2, L=3 | Verified end-to-end |
 

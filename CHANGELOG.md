@@ -3,6 +3,45 @@
 All notable changes to this repository are documented here. Dates use
 ISO 8601 (YYYY-MM-DD) and the local timezone is Asia/Shanghai.
 
+## [2026-07-04] --solve-collinear is now the complete collinear solver
+
+### Summary
+Moved the divergent-subspace projection (`apply_colprojdiv_slots`),
+matching logic, and `solMHV_LL.wxf` writing from `compute_rhs` into
+`solve_collinear.hpp::run_collinear_solver`. `compute_rhs` now delegates
+the solve to `--solve-collinear` as a subprocess (like it already does
+for `--extend` / `--sew` / `--project`), keeping only the boundary
+(RHS) computation and the downstream `hepMHV` / `E_L` / `R_L`
+derivation.
+
+Previously `--solve-collinear` solved in the full 11-dim letter space
+and failed at L≥3 because `E1` has divergent-letter entries. Now it
+projects both `A` and the boundary to the 2-dim divergent subspace
+before matching, producing consistent results at all loop orders.
+
+### Modified
+- **`solve_collinear.hpp`** — added `apply_colprojdiv_slots` (moved from
+  `compute_rhs.hpp`); `run_collinear_solver` now loads `colprojdiv_w1`,
+  projects `A` and the boundary to the divergent subspace, matches
+  positions (preserving the sew axis), solves `c·A_match = b_match`, and
+  writes `solMHV_LL.wxf` to `output/<L>loop/` for SEW targets.
+- **`compute_rhs.hpp`** — removed `apply_colprojdiv_slots` (moved to
+  `solve_collinear.hpp`); replaced the inline solve (steps 4–10:
+  projection chain, expand `A`, divergent projection, matching, linear
+  solve) with a `./bootstrap --solve-collinear` subprocess invocation;
+  kept the boundary computation, `hepMHV` contraction, `E_L` expansion,
+  `R_L` computation, and indicator-vector verification; loads
+  `colprojdiv_w1` locally for the verification step.
+
+### Verified
+- `./bootstrap --solve-collinear --target SEW_5p1 --rhs output/3loop/boundary_3L.wxf --projection divergent`:
+  unique solution `c[0] = -24, c[1] = 2`, 32 matching positions, writes
+  `solMHV_3L.wxf` (CRC32 `fadd9cec`).
+- `./compute_rhs --target SEW_3p1`: L=2 succeeds, `R2` divergent-free.
+- `./compute_rhs --target SEW_5p1`: L=3 succeeds, `c[0] = -24, c[1] = 2`,
+  `E3` (11606 nnz), `R3` (10461 nnz, divergent-free — only letters
+  `{2,3,4,5,6,7,8,9,10}`).
+
 ## [2026-07-04] Multi-project path support (--data-dir / --output-dir)
 
 ### Summary

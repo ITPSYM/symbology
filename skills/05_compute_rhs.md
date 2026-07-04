@@ -46,25 +46,23 @@ where `E_L` is the expanded collinear projection of `hepMHV_LL`, and
    - `E1^n` via `shuffle_power` (sequential shuffle product).
    - `E1 · R_L` via `tensor_shuffle_product_parallel` (sequential).
    - Weighted sum via `tensor_add_weighted`.
-4. **Expand the SEW collinear basis** (`A`) by contracting
-   `SEW_<name>_basis.wxf` with `first_w{N}_basis.wxf` (highest weight
-   first).
-5. **Project `A` and the boundary to the divergent subspace** via
-   `apply_colprojdiv_slots` (apply `colprojdiv_w1` to each 11-dim
-   letter slot). This is required at `L ≥ 3`.
-6. **Match positions** and **solve** `c · A_match = b_match` via
-   `solve_linear_system` (modular RREF + reconstruct). See
-   [04_collinear_solving.md](04_collinear_solving.md) for the matching
-   logic.
-7. **Compute `hepMHV_LL`** = `contract(solMHV_LL, SEW_basis, axis 1, 0)`.
-   Per the design decision (Q3 in the original spec): use the SEW basis
-   directly — do **not** apply `colprojdiv` to `hepMHV` or `E_L`.
-8. **Expand `hepMHV_LL` to `E_L`** (rank `2L`, dims `11^2L`) via
+4. **Invoke `--solve-collinear`** as a subprocess:
+   `./bootstrap --solve-collinear --target SEW_<name> --rhs <boundary_file>
+   --projection divergent --data-dir <abs> --output-dir <abs>`.
+   This delegates the full collinear solve (projection chain + divergent
+   projection + matching + linear solve) to the collinear solver, which
+   writes `solMHV_LL.wxf` to `output/<L>loop/`. See
+   [04_collinear_solving.md](04_collinear_solving.md).
+5. **Read `solMHV_LL.wxf`** and compute `hepMHV_LL` =
+   `contract(solMHV_LL, SEW_basis, axis 1, 0)`. Per the design decision
+   (Q3): use the SEW basis directly — do **not** apply `colprojdiv` to
+   `hepMHV` or `E_L`.
+6. **Expand `hepMHV_LL` to `E_L`** (rank `2L`, dims `11^2L`) via
    `expand_hepmhv`.
-9. **Compute `R_L = E_L - boundary`** and save.
-10. **Verify `R_L` is divergent-free** via the indicator-vector method:
-    collect distinct letter indices, build an 11-dim indicator, project
-    with `colprojdiv_w1`. If zero, `R_L = R*` is divergent-free.
+7. **Compute `R_L = E_L - boundary`** and save.
+8. **Verify `R_L` is divergent-free** via the indicator-vector method:
+   collect distinct letter indices, build an 11-dim indicator, project
+   with `colprojdiv_w1`. If zero, `R_L = R*` is divergent-free.
 
 ## Inputs
 
@@ -93,21 +91,24 @@ first run, and triggers writes to `output/collinear/` via `--project`.
 
 - `compute_rhs.cpp` — CLI parsing, loop-order derivation, path resolution.
 - `compute_rhs.hpp` — `compute_rhs_for_loop`, `compute_boundary`,
-  `shuffle_power`, `expand_hepmhv`, `apply_colprojdiv_slots`,
-  `ensure_fec_tensors`, `ensure_sew_basis`.
+  `shuffle_power`, `expand_hepmhv`, `ensure_fec_tensors`,
+  `ensure_sew_basis`, `find_dlogmat`.
 - `tensor_shuffle.h` — `tensor_shuffle_product_parallel` (sequential
   variant used for boundary computation; the parallel variant is
   incorrect).
+- `solve_collinear.hpp` — the collinear solver invoked as a subprocess
+  (see [04_collinear_solving.md](04_collinear_solving.md)).
 
 ## Conventions
 
 - **`--data-dir` / `--output-dir`**: default to `<exec_dir>/data` and
   `<exec_dir>/output`. Relative paths resolve against the executable
   directory (same convention as `bootstrap`).
-- **Subprocess invocation**: `compute_rhs` shells out to `./bootstrap
-  --extend`, `--sew`, `--project` to generate missing prerequisites. It
-  appends `--data-dir <abs>` / `--output-dir <abs>` (absolute paths) to
-  every subprocess so the same project directories are used end to end.
+- **Subprocess invocation**: `compute_rhs` shells out to
+  `./bootstrap --solve-collinear` to solve the collinear constraint at
+  each loop order. It passes absolute `--data-dir` / `--output-dir` to
+  the subprocess. It also shells out to `./bootstrap --extend`, `--sew`,
+  `--project` to generate missing SEW basis files.
   `find_dlogmat(data_dir)` scans for `dlogmat_*.wxf` instead of
   hardcoding `dlogmat_E6.wxf`.
 - **Sequential shuffle product**: always pass `pool = nullptr` to

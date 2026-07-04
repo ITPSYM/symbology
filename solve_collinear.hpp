@@ -25,6 +25,9 @@
 #include "tensor_expand.hpp"
 #include "linear_solve.hpp"
 
+#include <set>
+#include <map>
+
 // ========== collinear_proj_step: finite/divergent split ==========
 //
 // Mirrors collinear_proj.cpp (archive). Given:
@@ -424,6 +427,33 @@ sparse_tensor<T, index_t, SPARSE_CSR> apply_projection_axis0(
 	return sparse_tensor<T, index_t, SPARSE_CSR>(std::move(result), pool);
 }
 
+// ========== apply_colprojdiv_slots: project each letter slot to divergent subspace ==========
+//
+// The collinear constraint requires matching the DIVERGENT part of the boundary.
+// Both A (expanded SEW collinear basis) and the boundary live in the full letter
+// space (11-dim slots). We project each slot to the 2-dim divergent subspace via
+// colprojdiv_w1 (shape (11, 2), (input, output) convention) before solving c.A = b.
+//
+// After each contraction, the projected axis moves to the end of the tensor, so
+// the next slot to project is always at `first_slot_axis`. The final axis order
+// is: [non-projected axes..., projected axes...]. For A = (sew_dim, 11^k) this
+// gives (sew_dim, 2^k); for boundary = (11^k) this gives (2^k).
+
+template <typename T, typename index_t>
+sparse_tensor<T, index_t, SPARSE_COO> apply_colprojdiv_slots(
+	sparse_tensor<T, index_t, SPARSE_COO>&& tensor_coo,
+	const sparse_tensor<T, index_t, SPARSE_COO>& proj_coo,  // (11, m)
+	size_t first_slot_axis,
+	size_t n_slots,
+	const field_t& F, thread_pool* pool) {
+
+	auto result = std::move(tensor_coo);
+	for (size_t s = 0; s < n_slots; s++) {
+		result = tensor_contract(result, proj_coo, first_slot_axis, 0, F, pool);
+	}
+	return result;
+}
+
 // ========== Full collinear solver ==========
 //
 // Orchestrates: compute projections → apply projection → expand → solve.
@@ -547,8 +577,6 @@ void run_collinear_solver(
 	// Step 5: Load RHS (or construct empty RHS for "--rhs 0")
 	// Q7: "--rhs 0" means the RHS is an all-zero tensor. We construct it in-memory
 	// with shape = expanded.dims[1..] so that b_size = n_constraints (matches A).
-	// This avoids the WXF writer limitation (cannot serialize 0-nnz tensors) and
-	// gives the empty RHS the correct shape for solve_linear_system's dimension check.
 	sparse_tensor<T, index_t, SPARSE_CSR> rhs;
 	if (rhs_path.string() == "0") {
 		std::vector<size_t> b_dims;
@@ -567,10 +595,96 @@ void run_collinear_solver(
 		print_tensor_info(rhs);
 	}
 
-	// Step 6: Solve the linear system
-	auto result = solve_linear_system<T, index_t>(
-		std::move(expanded), std::move(rhs), F, opt);
+	// Step 5b: Load colprojdiv_w1 and project A + boundary to divergent subspace.
+	// The collinear constraint c.A = b is only enforced in the divergent subspace.
+	// Each 11-dim letter slot is projected to its 2-dim divergent subspace via
+	// colprojdiv_w1. This is required at L>=3 because E1 has divergent-letter
+	// entries (E1[0,0]=-2, E1[1,1]=-2), so the boundary has divergent components
+	// and solving in the full 11-dim space produces inconsistent systems.
+	auto colprojdiv_w1_path = collinear_dir / "colprojdiv_w1.wxf";
+	if (!std::filesystem::exists(colprojdiv_w1_path)) {
+		throw std::runtime_error("run_collinear_solver: colprojdiv_w1 not found: "
+			+ colprojdiv_w1_path.string()
+			+ " (run the collinear projection chain first)");
+	}
+	auto colprojdiv_w1_csr = projection_read_tensor<T, index_t>(colprojdiv_w1_path, F, pool);
+	sparse_tensor<T, index_t, SPARSE_COO> colprojdiv_w1_coo(std::move(colprojdiv_w1_csr));
 
+	sparse_tensor<T, index_t, SPARSE_COO> A_coo(std::move(expanded));
+	sparse_tensor<T, index_t, SPARSE_COO> b_coo(std::move(rhs));
+
+	size_t n_letter_slots = b_coo.rank();   // = 2L
+	size_t A_first_slot = 1;                // A has leading sew_dim axis
+
+	std::cout << "== Projecting A and boundary to divergent subspace ==" << std::endl;
+	std::cout << "   n_slots=" << n_letter_slots << ", A_first_slot=" << A_first_slot << std::endl;
+	A_coo = apply_colprojdiv_slots<T, index_t>(std::move(A_coo), colprojdiv_w1_coo, A_first_slot, n_letter_slots, F, pool);
+	b_coo = apply_colprojdiv_slots<T, index_t>(std::move(b_coo), colprojdiv_w1_coo, 0, n_letter_slots, F, pool);
+
+	std::cout << "   A_proj: rank=" << A_coo.rank() << " dims=";
+	for (size_t i = 0; i < A_coo.rank(); i++) std::cout << A_coo.dim(i) << (i + 1 < A_coo.rank() ? "x" : "");
+	std::cout << " nnz=" << A_coo.nnz() << std::endl;
+	std::cout << "   b_proj: rank=" << b_coo.rank() << " dims=";
+	for (size_t i = 0; i < b_coo.rank(); i++) std::cout << b_coo.dim(i) << (i + 1 < b_coo.rank() ? "x" : "");
+	std::cout << " nnz=" << b_coo.nnz() << std::endl;
+
+	// Step 5c: Match positions (preserve sew axis).
+	// A (expanded SEW basis) and boundary may have different supports. We solve
+	// using only matching positions (both nonzero), where the ratio c = boundary/A
+	// should be consistent. Non-matching positions become part of R*.
+	// CRITICAL: preserve the sew axis in A_match — do not collapse into std::map
+	// (that overwrites duplicate sew entries and breaks multi-unknown systems).
+	std::map<std::vector<index_t>, T> b_map;
+	for (auto i : b_coo.gen_perm()) {
+		b_map[b_coo.index_vector(i)] = b_coo.val(i);
+	}
+
+	sparse_tensor<T, index_t, SPARSE_COO> A_match(A_coo.dims());
+	sparse_tensor<T, index_t, SPARSE_COO> b_match(b_coo.dims());
+	std::set<std::vector<index_t>> matched_keys;
+	size_t n_A_entries = 0;
+	for (auto i : A_coo.gen_perm()) {
+		auto full_idx = A_coo.index_vector(i);
+		std::vector<index_t> key(full_idx.begin() + 1, full_idx.end());
+		auto it = b_map.find(key);
+		if (it != b_map.end()) {
+			A_match.push_back(full_idx, A_coo.val(i));
+			if (matched_keys.insert(key).second) {
+				b_match.push_back(key, it->second);
+			}
+			n_A_entries++;
+		}
+	}
+	A_match.canonicalize();
+	b_match.canonicalize();
+
+	std::cout << "   Matching positions: " << matched_keys.size()
+	          << " (A_entries=" << n_A_entries << ")" << std::endl;
+
+	// Step 6: Solve c.A_match = b_match
+	auto A_match_csr = sparse_tensor<T, index_t, SPARSE_CSR>(std::move(A_match), pool);
+	auto b_match_csr = sparse_tensor<T, index_t, SPARSE_CSR>(std::move(b_match), pool);
+	auto result = solve_linear_system<T, index_t>(
+		std::move(A_match_csr), std::move(b_match_csr), F, opt);
+
+	// Step 6b: Write solMHV_LL.wxf for SEW targets
+	if (!sew_name.empty() && result.consistent) {
+		size_t L = target_weight / 2;
+		auto L_loop_dir = output_dir / (std::to_string(L) + "loop");
+		std::filesystem::create_directories(L_loop_dir);
+		auto solMHV_path = L_loop_dir / ("solMHV_" + std::to_string(L) + "L.wxf");
+
+		sparse_mat<T, index_t> sol_mat(1, result.n_unknowns);
+		for (size_t i = 0; i < result.solution.nnz(); i++) {
+			sol_mat[0].push_back(result.solution(i), result.solution[i]);
+		}
+		sol_mat[0].compress();
+		sparse_tensor<T, index_t, SPARSE_CSR> sol_csr(sol_mat);
+		projection_write_tensor<T, index_t>(solMHV_path, std::move(sol_csr), pool);
+		std::cout << "   Wrote " << solMHV_path.string() << std::endl;
+	}
+
+	// Step 7: Print result
 	if (result.consistent) {
 		std::cout << "========================================" << std::endl;
 		std::cout << "Solution" << std::endl;

@@ -94,7 +94,9 @@ be divergent-free (verified by the indicator-vector method).
 - `output/collinear/first_w{N}_basis.wxf` (from the projection chain).
 - The RHS file (passed via `--rhs`).
 
-## Outputs (to `output/collinear/`)
+## Outputs
+
+### To `output/collinear/`
 
 | File | Description |
 |------|-------------|
@@ -104,10 +106,16 @@ be divergent-free (verified by the indicator-vector method).
 
 Empty projections (0 rows) are not written.
 
+### To `output/<L>loop/` (SEW targets only)
+
+| File | Description |
+|------|-------------|
+| `solMHV_LL.wxf` | Solution coefficient vector `(1 × n_unknowns)`, written only if the system is consistent. `L = target_weight / 2`. |
+
 ## Key files
 
 - `solve_collinear.hpp` — `run_collinear_proj_chain`,
-  `run_collinear_solver`, `detect_chain_base_paths`.
+  `run_collinear_solver`, `apply_colprojdiv_slots`, `detect_chain_base_paths`.
 - `linear_solve.hpp` — `solve_linear_system` (modular RREF + reconstruct).
 - `tensor_expand.hpp` — `expand_tensor` (contracts with a basis chain).
 
@@ -138,18 +146,19 @@ Empty projections (0 rows) are not written.
 
 ```bash
 # L=2: solve for c such that c·A = E1²/2 (the boundary)
-./bootstrap --solve-collinear --target SEW_3p1 --rhs output/2loop/boundary_2L.wxf
+./bootstrap --solve-collinear --target SEW_3p1 --rhs output/2loop/boundary_2L.wxf --projection divergent
 
 # L=3: boundary = E1³/6 + E1·R2 (requires L=2 outputs to exist)
-./bootstrap --solve-collinear --target SEW_5p1 --rhs output/3loop/boundary_3L.wxf
+./bootstrap --solve-collinear --target SEW_5p1 --rhs output/3loop/boundary_3L.wxf --projection divergent
 ```
 
 For the full recursive workflow (computing the boundary too), use
 `compute_rhs` instead — see [05_compute_rhs.md](05_compute_rhs.md).
+`compute_rhs` internally invokes `--solve-collinear` for each loop order.
 
 ## Verified status
 
-- **L=2 (`SEW_3p1`)**: unique solution `c[0] = 8`, all 44 constraints
+- **L=2 (`SEW_3p1`)**: unique solution `c[0] = 8`, 8 constraints
   verified. `R2` is divergent-free.
 - **L=3 (`SEW_5p1`)**: unique solution `c[0] = -24, c[1] = 2`, all 32
   constraints verified. `R3` contains only letters
