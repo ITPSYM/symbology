@@ -16,9 +16,10 @@ letter-space projection used in its last step is **user-selectable via
 flag through to the subprocess. Pass `identity` to do nothing (solve
 in the full letter space); pass a projection file (e.g.
 `output/collinear/colprojdiv_w1.wxf`) to project each letter slot.
-This choice is important — for the standard `E6` solve at `L ≥ 3` you
-must pass a divergent projection because `E1` has divergent-letter
-entries.
+This choice is important — for the standard `E6` solve you must pass
+a divergent projection (`colprojdiv_w1`) at every `L ≥ 2`, because
+`E1` has divergent-letter entries and `identity` is inconsistent under
+union matching.
 
 The boundary at loop `L` is computed from the lower-loop results:
 
@@ -179,8 +180,9 @@ boundary has divergent-letter entries that A does not cover in the full
 2. **`insert_add` corruption**: the COO `insert_add` (ordered insert)
    corrupts tensor dims for large results. Use `unordered_map` +
    `push_back` instead. (Fixed in `tensor_shuffle.h`.)
-3. **Divergent-subspace projection is required at `L ≥ 3`**: because
-   `E1` has divergent-letter entries. See
+3. **Divergent-subspace projection is required at `L ≥ 2`** for `E6`:
+   because `E1` has divergent-letter entries. Under union matching,
+   `identity` is inconsistent at all `L ≥ 2`. See
    [04_collinear_solving.md](04_collinear_solving.md).
 4. **Matching must preserve the sew axis**: do not collapse `A` into
    `std::map<key, T>`. See [04_collinear_solving.md](04_collinear_solving.md).

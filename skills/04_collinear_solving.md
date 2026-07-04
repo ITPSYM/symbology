@@ -24,12 +24,14 @@ required — it is not hardcoded. Pass either:
 - the literal `identity`, which means "do nothing" — the solve runs
   in the full 11-dim letter space with no projection applied.
 
-`identity` is the do-nothing default value: use it when the boundary
-already lives in the desired subspace (e.g. at `L = 2`, where `E1²/2`
-has no divergent components) or when experimenting. For the standard
-`E6` collinear solve at `L ≥ 3` you must pass a divergent projection
-(`colprojdiv_w1`) because `E1` has divergent-letter entries and the
-full-space system is inconsistent.
+`identity` is the do-nothing value: no projection is applied, and the
+constraint `c·A = boundary` is enforced exactly in the full 11-dim
+letter space (union matching). For the standard `E6` collinear solve
+this is **inconsistent at all `L ≥ 2`** because the boundary `E1^L/L!`
+has entries at letter combinations involving the divergent letters
+`{0, 1}` that the SEW collinear basis `A` does not cover. Use
+`colprojdiv_w1` to project both sides to the divergent subspace, where
+their supports coincide exactly and `c·A` cancels `boundary` exactly.
 
 The finite part is `R* = c·A - boundary`, which must be divergent-free
 when a divergent projection is used (verified by the indicator-vector
@@ -85,14 +87,15 @@ method, skipped for `identity`).
      `{2, ..., 2}`.
    - If `--letter-projection identity`, this step is **skipped** — the
      solve happens in the full 11-dim letter space ("do nothing").
-   - A divergent projection is **required at `L ≥ 3`** when `E1` has
-     divergent-letter entries (`E1[0,0] = -2`, `E1[1,1] = -2`), so the
-     boundary has divergent components. Under union matching, `identity`
-     is inconsistent at **all** `L ≥ 2` for the `E6` example because the
-     boundary's entries at letter combinations involving `{0, 1}` are
-     not covered by A in the full 11-dim space. Use `colprojdiv_w1` to
-     project both sides to the divergent subspace, where the supports
-     coincide exactly.
+   - A divergent projection is **required at `L ≥ 2`** for the `E6`
+     example, because `E1` has divergent-letter entries
+     (`E1[0,0] = -2`, `E1[1,1] = -2`) and the boundary `E1^L/L!`
+     therefore has divergent components. Under union matching,
+     `identity` is inconsistent at **all** `L ≥ 2` for `E6` because
+     the boundary's entries at letter combinations involving `{0, 1}`
+     are not covered by A in the full 11-dim space. Use
+     `colprojdiv_w1` to project both sides to the divergent subspace,
+     where the supports coincide exactly.
 
 4. **Match positions — UNION of supports** (`A_match`, `b_match`):
    - Enforce `c·A = boundary` at **every** position where either `A` or

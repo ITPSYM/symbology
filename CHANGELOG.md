@@ -137,8 +137,9 @@ target other letter subspaces without code changes.
 - `./compute_rhs --target SEW_5p1 --letter-projection output/collinear/colprojdiv_w1.wxf`:
   L=3 succeeds, `c[0] = -24, c[1] = 2`, `R3` divergent-free.
 - `./compute_rhs --target SEW_3p1 --letter-projection identity`: L=2
-  succeeds; `R2` CRC32 matches the `colprojdiv_w1` case (same result
-  at L=2 since the boundary has no divergent components).
+  succeeded under intersection matching at the time of this entry.
+  **Note:** this was superseded by the union-matching change later on
+  2026-07-04 — `identity` is now inconsistent at all `L ≥ 2` for `E6`.
 - Missing `--letter-projection` in either `compute_rhs` or
   `bootstrap --solve-collinear` → exits with code 1 and a helpful
   message showing example usage.
