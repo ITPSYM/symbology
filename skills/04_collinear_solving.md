@@ -2,7 +2,10 @@
 
 ## Purpose
 
-Solve the collinear constraint `c · A = boundary`, where:
+A general collinear-like constraint solver. It solves `c · A = boundary`
+for any projection that is structurally similar to the collinear
+projection (i.e. one that produces an expanded basis `A` and a boundary
+of matching shape):
 
 - `A` is the expanded SEW collinear basis (rank `2L+1`:
   `{sew_dim, 11, ..., 11}`).
@@ -10,13 +13,27 @@ Solve the collinear constraint `c · A = boundary`, where:
   `2L`: `{11, ..., 11}`).
 - `c` is the unknown coefficient vector (length `sew_dim`).
 
-The constraint is enforced in the projected letter subspace (each
-11-dim letter slot projected via the `--letter-projection` matrix, by
-default `colprojdiv_w1` which projects to the 2-dim divergent
-subspace). Pass `--letter-projection identity` to solve in the full
-letter space (no projection). The finite part is
-`R* = c·A - boundary`, which must be divergent-free when a divergent
-projection is used (verified by the indicator-vector method).
+**The letter-space projection used in the last step is user-selectable
+via `--letter-projection`, and this choice is important.** The flag is
+required — it is not hardcoded. Pass either:
+
+- a path to a projection matrix (e.g.
+  `output/collinear/colprojdiv_w1.wxf`), which is applied to each
+  11-dim letter slot of both `A` and the boundary via
+  `apply_colprojdiv_slots` before matching; or
+- the literal `identity`, which means "do nothing" — the solve runs
+  in the full 11-dim letter space with no projection applied.
+
+`identity` is the do-nothing default value: use it when the boundary
+already lives in the desired subspace (e.g. at `L = 2`, where `E1²/2`
+has no divergent components) or when experimenting. For the standard
+`E6` collinear solve at `L ≥ 3` you must pass a divergent projection
+(`colprojdiv_w1`) because `E1` has divergent-letter entries and the
+full-space system is inconsistent.
+
+The finite part is `R* = c·A - boundary`, which must be divergent-free
+when a divergent projection is used (verified by the indicator-vector
+method, skipped for `identity`).
 
 ## CLI entry point
 
@@ -34,7 +51,7 @@ projection is used (verified by the indicator-vector method).
 | `--target <SEW_FpL>` | Target SEW name (e.g. `SEW_3p1` for 2-loop, `SEW_5p1` for 3-loop). |
 | `--rhs <rhs.wxf>` or `--rhs 0` | RHS path. Required — exits with code 1 if missing. `--rhs 0` means an all-zero RHS constructed in-memory. |
 | `--projection <finite\|divergent>` | Which projection to apply. Required — no default. |
-| `--letter-projection <file\|identity>` | Letter-slot projection matrix. Required. A path (e.g. `output/collinear/colprojdiv_w1.wxf`) projects each 11-dim letter slot to a lower-dim subspace; `identity` skips projection (solve in full letter space). Relative paths resolve against the executable directory. |
+| `--letter-projection <file\|identity>` | Letter-slot projection matrix. Required (no default — user-selectable). A path (e.g. `output/collinear/colprojdiv_w1.wxf`) projects each 11-dim letter slot to a lower-dim subspace; `identity` is the do-nothing value (solve in full letter space). Relative paths resolve against the executable directory. |
 | `--basis <basis.wxf>` | Expansion basis file (repeatable; highest weight first). If omitted, auto-detected as `first_w{N}_basis.wxf` for weights `target_weight-1` down to 2. |
 | `--data-dir <dir>` | Data directory with seed files (default: `<exec_dir>/data`). Resolved against the executable directory. |
 | `--output-dir <dir>` | Output directory (default: `<exec_dir>/output`). Same resolution as `--data-dir`. |
@@ -57,18 +74,22 @@ projection is used (verified by the indicator-vector method).
      first, down to weight 2).
    - Result: `A` with rank `2L+1`, dims `{sew_dim, 11, ..., 11}`.
 
-3. **Project to the divergent subspace** (`apply_colprojdiv_slots`):
+3. **Project to the user-selected letter subspace** (`apply_colprojdiv_slots`):
+   - The projection is **chosen by the user** via `--letter-projection`;
+     it is not hardcoded. This makes the solver reusable for any
+     collinear-like projection, not just the `E6` divergent one.
    - Apply the `--letter-projection` matrix to each 11-dim letter slot of
-     both `A` and the boundary. The default example is `colprojdiv_w1`,
-     which projects to the 2-dim divergent subspace.
+     both `A` and the boundary. The standard `E6` example is
+     `colprojdiv_w1`, which projects to the 2-dim divergent subspace.
    - `A_proj` becomes `{sew_dim, 2, ..., 2}`; `boundary_proj` becomes
      `{2, ..., 2}`.
-   - If `--letter-projection identity`, this step is skipped — the solve
-     happens in the full 11-dim letter space.
-   - Projection to the divergent subspace is **required** at `L ≥ 3`
-     when `E1` has divergent-letter entries (`E1[0,0] = -2`,
-     `E1[1,1] = -2`), so the boundary has divergent components and
-     solving in the full space fails.
+   - If `--letter-projection identity`, this step is **skipped** — the
+     solve happens in the full 11-dim letter space ("do nothing").
+   - A divergent projection is **required at `L ≥ 3`** when `E1` has
+     divergent-letter entries (`E1[0,0] = -2`, `E1[1,1] = -2`), so the
+     boundary has divergent components and solving in the full space
+     fails. At `L = 2` the boundary has no divergent components, so
+     `identity` and `colprojdiv_w1` give the same result.
 
 4. **Match positions** (`A_match`, `b_match`):
    - Iterate `A_proj` directly (do **not** collapse into
@@ -134,7 +155,12 @@ Empty projections (0 rows) are not written.
   `finite` or `divergent` explicitly.
 - **`--letter-projection` is required** — there is no default. Pass
   either a file path (e.g. `output/collinear/colprojdiv_w1.wxf`) or
-  the literal `identity` to skip projection (solve in full letter space).
+  the literal `identity` to skip projection (solve in full letter
+  space). `identity` is the **do-nothing** value: the constraint is
+  enforced on matching positions only, with no letter-space projection.
+  This makes the solver reusable for any collinear-like projection —
+  the user selects the letter subspace to project into, instead of the
+  code hardcoding `colprojdiv_w1`.
 - **`--data-dir` / `--output-dir`**: default to `<exec_dir>/data` and
   `<exec_dir>/output`. Relative paths resolve against the executable
   directory (same convention as `bootstrap`).

@@ -223,12 +223,12 @@ Options:
 - `--induce`: reserved for future induced-transformation workflows;
 - `--project`: run the universal projection pipeline (requires `--symmetry`, `--target`);
 - `--solve-symmetry`: compute the invariant subspace of a target's projection (requires `--symmetry`, `--target`);
-- `--solve-collinear`: finite/divergent split + expansion + linear solve (requires `--target`, `--rhs`, `--projection`, `--letter-projection`; `--basis` optional);
+- `--solve-collinear`: a general collinear-like constraint solver — finite/divergent split + expansion + linear solve (requires `--target`, `--rhs`, `--projection`, `--letter-projection`; `--basis` optional). The letter-space projection in the last step is **user-selectable** via `--letter-projection` (not hardcoded), so the same solver works for any collinear-like projection;
 - `--symmetry <collinear|cyclic|flip|parity>`: symmetry name for `--project` / `--solve-symmetry`;
 - `--target <SEW_FpL|FEC_W|LEC_W>`: target name (e.g. `SEW_5p1`, `FEC_3`, `LEC_2`);
 - `--rhs <rhs.wxf>` or `--rhs 0`: RHS path for `--solve-collinear`; `"0"` means an all-zero RHS constructed in-memory. Missing → exit code 1;
 - `--projection <finite|divergent>`: which projection to apply in `--solve-collinear` (required — no default);
-- `--letter-projection <file|identity>`: letter-slot projection matrix for `--solve-collinear` (required — no default). A path (e.g. `output/collinear/colprojdiv_w1.wxf`) projects each 11-dim letter slot to a lower-dim subspace; the literal `identity` skips projection (solve in full letter space). Relative paths resolve against the executable directory;
+- `--letter-projection <file|identity>`: letter-slot projection matrix for `--solve-collinear` (required — no default). A path (e.g. `output/collinear/colprojdiv_w1.wxf`) projects each 11-dim letter slot to a lower-dim subspace; the literal `identity` is the **do-nothing** value (solve in full letter space). This choice is important: the user selects the letter subspace instead of the code hardcoding `colprojdiv_w1`, so the same solver works for any collinear-like projection. Relative paths resolve against the executable directory;
 - `--basis <basis.wxf>`: expansion basis file (repeatable; highest weight first). Auto-detected as `first_w{N}_basis.wxf` if omitted;
 - `--data-dir <dir>`: data directory with seed files (default: `<exec_dir>/data`). Used by `--project`, `--solve-symmetry`, `--solve-collinear`; ignored by `--extend` / `--sew` (which use explicit `-c`/`-f`/`-l`/`-o` paths);
 - `--output-dir <dir>`: output directory (default: `<exec_dir>/output`). Same scope as `--data-dir`;
@@ -250,7 +250,7 @@ Thread count is chosen automatically by `SparseRREF`.
 Options:
 
 - `--target <SEW_FpL>`: target SEW name (required). Loop order `L = (F+L)/2`; supported `L = 2..5`;
-- `--letter-projection <file|identity>`: letter-slot projection matrix (required — no default). A path (e.g. `output/collinear/colprojdiv_w1.wxf`) projects each 11-dim letter slot to a lower-dim subspace; `identity` skips projection (solve in full letter space). Relative paths resolve against the executable directory. Threaded through to the `--solve-collinear` subprocess;
+- `--letter-projection <file|identity>`: letter-slot projection matrix (required — no default). A path (e.g. `output/collinear/colprojdiv_w1.wxf`) projects each 11-dim letter slot to a lower-dim subspace; `identity` is the **do-nothing** value (solve in full letter space). This choice is important: the user selects the letter subspace, so `--solve-collinear` works for any collinear-like projection. Relative paths resolve against the executable directory. Threaded through to the `--solve-collinear` subprocess;
 - `--data-dir <dir>`: data directory with seed files (default: `<exec_dir>/data`);
 - `--output-dir <dir>`: output directory (default: `<exec_dir>/output`);
 - `-h/--help`: print usage.

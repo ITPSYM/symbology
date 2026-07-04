@@ -10,6 +10,16 @@ order `L`. This is a standalone executable that **couples with** the main
 `--solve-collinear` (to solve the collinear constraint at each loop
 order).
 
+`--solve-collinear` is a general collinear-like constraint solver: the
+letter-space projection used in its last step is **user-selectable via
+`--letter-projection`** (not hardcoded). `compute_rhs` threads this
+flag through to the subprocess. Pass `identity` to do nothing (solve
+in the full letter space); pass a projection file (e.g.
+`output/collinear/colprojdiv_w1.wxf`) to project each letter slot.
+This choice is important — for the standard `E6` solve at `L ≥ 3` you
+must pass a divergent projection because `E1` has divergent-letter
+entries.
+
 The boundary at loop `L` is computed from the lower-loop results:
 
 ```
@@ -34,7 +44,7 @@ where `E_L` is the expanded collinear projection of `hepMHV_LL`, and
 | Flag | Description |
 |------|-------------|
 | `--target <SEW_FpL>` | Target SEW name (required). Loop order `L = (F+L)/2`. Supported `L = 2..5`. |
-| `--letter-projection <file\|identity>` | Letter-slot projection matrix (required). A path (e.g. `output/collinear/colprojdiv_w1.wxf`) projects each 11-dim letter slot to a lower-dim subspace; `identity` skips projection. Relative paths resolve against the executable directory. |
+| `--letter-projection <file\|identity>` | Letter-slot projection matrix (required — user-selectable). A path (e.g. `output/collinear/colprojdiv_w1.wxf`) projects each 11-dim letter slot to a lower-dim subspace; `identity` is the do-nothing value (solve in full letter space). Relative paths resolve against the executable directory. |
 | `--data-dir <dir>` | Data directory with seed files. Default: `<exec_dir>/data`. |
 | `--output-dir <dir>` | Output directory. Default: `<exec_dir>/output`. |
 | `-h` / `--help` | Print usage. |
@@ -114,9 +124,12 @@ first run, and triggers writes to `output/collinear/` via `--project`.
 - **`--letter-projection` is required** — there is no default. Pass
   either a file path (e.g. `output/collinear/colprojdiv_w1.wxf`) or
   the literal `identity` to skip projection (solve in full letter
-  space). The value is threaded through to the `--solve-collinear`
-  subprocess as an absolute path (file case) or verbatim (`identity`
-  case).
+  space). `identity` is the **do-nothing** value. This makes
+  `--solve-collinear` reusable for any collinear-like projection: the
+  user selects the letter subspace instead of the code hardcoding
+  `colprojdiv_w1`. The value is threaded through to the
+  `--solve-collinear` subprocess as an absolute path (file case) or
+  verbatim (`identity` case).
 - **Subprocess invocation**: `compute_rhs` shells out to
   `./bootstrap --solve-collinear` to solve the collinear constraint at
   each loop order. It passes absolute `--data-dir` / `--output-dir` and

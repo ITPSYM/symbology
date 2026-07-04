@@ -72,5 +72,13 @@ because they affect every module:
 7. **E1 has divergent-letter entries.** `E1[0,0] = -2` and
    `E1[1,1] = -2`. The boundary `E1^L / L!` therefore has divergent
    components, and solving `c·A = boundary` in the full space fails at
-   `L ≥ 3`. Always project both `A` and the boundary to the divergent
-   subspace (`apply_colprojdiv_slots`) before matching.
+   `L ≥ 3`. The letter-space projection is **user-selectable** via
+   `--letter-projection` (`identity` = do nothing); for the standard
+   `E6` solve at `L ≥ 3` you must pass a divergent projection such as
+   `colprojdiv_w1` so both `A` and the boundary are projected to the
+   divergent subspace (`apply_colprojdiv_slots`) before matching.
+8. **`--letter-projection` is required.** `--solve-collinear` and
+   `compute_rhs` both exit with code 1 if the flag is missing. The
+   flag is not hardcoded: the solver is a general collinear-like
+   constraint solver, and the user selects the letter subspace to
+   project into. `identity` is the do-nothing value.
