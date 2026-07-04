@@ -1,7 +1,7 @@
 
 # Symbology
 
-Working prototype for symbol-space bootstrap experiments. The current code focuses on recursive first-entry/last-entry growth and sewing for the `E6` heptagon data, using sparse rational linear algebra through [`SparseRREF`](https://github.com/munuxi/SparseRREF).
+Working prototype for symbol-space bootstrap experiments on the `E6` heptagon. The codebase covers the full bootstrap pipeline: recursive first-entry/last-entry growth and sewing (`bootstrap --extend` / `--sew`), universal projection matrices (`--project`), symmetry invariant-subspace solving (`--solve-symmetry`), collinear constraint solving (`--solve-collinear`), and recursive RHS (collinear boundary) computation (`compute_rhs`). All sparse rational linear algebra goes through [`SparseRREF`](https://github.com/munuxi/SparseRREF).
 
 ## What You Need
 
@@ -80,23 +80,49 @@ Package names can vary slightly across distributions. The important libraries ar
 
 ## Build
 
-The main executable is `bootstrap`, built from:
+There are three executables, all built with `make`:
 
-- `bootstrap.cpp`: command-line parsing, WXF input/output, CRC32 printing, and mode dispatch;
-- `bootstrap.hpp`: tensor layouts, forward/backward extension, sewing, timing, and helper routines;
-- `SparseRREF/`: sparse tensors, sparse RREF, rational arithmetic support, threading, and WXF support.
+- `bootstrap` — the main dispatcher (extension, sewing, projection, symmetry solving, collinear solving). Built from `bootstrap.cpp` plus the shared headers.
+- `compute_rhs` — standalone recursive RHS (collinear boundary) computation. Built from `compute_rhs.cpp`.
+- `inspect_tensors` — small diagnostic tool that prints tensor contents. Built from `inspect_tensors.cpp`.
+
+Each rule in the `Makefile` declares its own header dependencies, so `make` will only rebuild what has changed. The shared headers are: `bootstrap.hpp`, `projection.hpp`, `solve_symmetry.hpp`, `solve_collinear.hpp`, `linear_solve.hpp`, `tensor_expand.hpp`, `tensor_shuffle.h`.
 
 Build from the repository root:
 
 ```bash
-make
+make               # builds bootstrap only (default target)
+make compute_rhs   # builds the RHS computation module
+make inspect_tensors  # builds the diagnostic tool
+make all           # same as `make bootstrap`
 ```
 
-Clean the binary with:
+Clean the binaries with:
 
 ```bash
 make clean
 ```
+
+## Multi-Project Layout
+
+By default, every executable reads seed tensors from `data/` and writes outputs to `output/`. This is the `E6` problem that ships with the repository. For a different symmetry group or a different bootstrap project, use a per-project directory pair:
+
+```
+data_<PROJECT>/      # e.g. data_E7/, data_D5/
+output_<PROJECT>/    # e.g. output_E7/, output_D5/
+```
+
+The default (no tag) is `data/` + `output/`, which is backward compatible.
+
+### Conventions
+
+- Inside `data_<PROJECT>/`, the seed files keep the same **roles** as in `data/` (see `data/DESCRIPTION.md`), but encode the symmetry group in the filename where it matters: `dlogmat_<group>.wxf` (e.g. `dlogmat_E7.wxf`), `FEC_1.wxf`, `LEC_1.wxf`, `colmat<N>.wxf` (where `<N>` is the FEC weight-1 dimension — `42` for `E6`), `colprojdiv.wxf`, `colprojfin.wxf`, `<group>repmat_*.wxf`, `E1.wxf`.
+- All executables accept `--data-dir <dir>` and `--output-dir <dir>`. `compute_rhs` already exposes these; for `bootstrap`'s `--project` / `--solve-symmetry` / `--solve-collinear` modes, the override is planned but not yet wired through (see `CHANGELOG.md`).
+- A convenience shorthand `--project <P>` (resolving to `data_<P>/` + `output_<P>/`) is planned.
+
+### Current limitation
+
+`compute_rhs` accepts `--data-dir` / `--output-dir`, but when it shells out to `./bootstrap --extend` / `--sew` / `--project` to generate missing prerequisites, it does **not** propagate the override. Until this is fixed, run the bootstrap prerequisites manually with the correct directories first, then invoke `compute_rhs` with matching `--data-dir` / `--output-dir`. See `CHANGELOG.md` and `skills/05_compute_rhs.md`.
 
 ## Minimal Smoke Test
 
@@ -130,7 +156,29 @@ The full workflow is available as:
 
 It lists the intended first-stage path through `FEC_8`, `LEC_5`, and `SEW_8p2`, but it is not expected to be practical on a normal laptop.
 
+### Projection and solving smoke test
+
+After running the bootstrap smoke test above (or `run_workflow.sh smoke`), the SEW tensors exist. Run the projection, symmetry solving, and RHS computation modules:
+
+```bash
+./bootstrap --project --symmetry collinear --target SEW_5p1
+./bootstrap --solve-symmetry --symmetry cyclic --target SEW_5p1
+./compute_rhs --target SEW_3p1    # 2-loop (requires only E1)
+./compute_rhs --target SEW_5p1    # 3-loop (requires L=2 outputs)
+```
+
+Or via the driver scripts:
+
+```bash
+./run_projection.sh SEW_5p1   # all four symmetries
+./run_solve.sh SEW_5p1        # cyclic, flip, parity
+```
+
+A successful `compute_rhs --target SEW_5p1` run prints the unique solution (`c[0] = -24, c[1] = 2`), verifies all 32 constraints, and confirms `R3` is divergent-free (no entries at letters `{0, 1}`).
+
 ## CLI
+
+### Core bootstrap (`./bootstrap`)
 
 Forward extension:
 
@@ -150,32 +198,99 @@ Sewing:
 ./bootstrap --sew -c data/dlogmat_E6.wxf -f output/FEC_4.wxf -l output/LEC_2.wxf -o output/SEW_4p2.wxf
 ```
 
+Projection matrix (collinear or symmetry):
+
+```bash
+./bootstrap --project --symmetry collinear --target SEW_5p1
+./bootstrap --project --symmetry cyclic    --target SEW_5p1
+```
+
+Symmetry invariant subspace solver:
+
+```bash
+./bootstrap --solve-symmetry --symmetry cyclic --target SEW_5p1
+```
+
+Collinear constraint solver:
+
+```bash
+./bootstrap --solve-collinear --target SEW_5p1 --rhs output/3loop/boundary_3L.wxf
+./bootstrap --solve-collinear --target SEW_3p1 --rhs 0   # empty RHS
+```
+
 Options:
 
 - `--extend`: grow either forward (`-f/--first`) or backward (`-l/--last`) data by one weight;
 - `--sew`: combine a forward tensor and a backward tensor into a sewing matrix;
 - `--induce`: reserved for future induced-transformation workflows;
+- `--project`: run the universal projection pipeline (requires `--symmetry`, `--target`);
+- `--solve-symmetry`: compute the invariant subspace of a target's projection (requires `--symmetry`, `--target`);
+- `--solve-collinear`: finite/divergent split + expansion + linear solve (requires `--target`, `--rhs`; `--projection` and `--basis` optional);
+- `--symmetry <collinear|cyclic|flip|parity>`: symmetry name for `--project` / `--solve-symmetry`;
+- `--target <SEW_FpL|FEC_W|LEC_W>`: target name (e.g. `SEW_5p1`, `FEC_3`, `LEC_2`);
+- `--rhs <rhs.wxf>` or `--rhs 0`: RHS path for `--solve-collinear`; `"0"` means an all-zero RHS constructed in-memory. Missing → exit code 1;
+- `--projection <finite|divergent>`: which projection to apply in `--solve-collinear` (default: `divergent`);
+- `--basis <basis.wxf>`: expansion basis file (repeatable; highest weight first). Auto-detected as `first_w{N}_basis.wxf` if omitted;
 - `-c/--condition`: condition tensor, currently `data/dlogmat_E6.wxf`;
-- `-o/--output`: output WXF file.
+- `-f/--first`, `-l/--last`, `-o/--output`: input/output file paths;
+- `-h/--help`: print usage.
 
 Thread count is chosen automatically by `SparseRREF`.
 
+### RHS computation (`./compute_rhs`)
+
+```bash
+./compute_rhs --target SEW_3p1    # 2-loop: computes E2, R2, boundary_2L
+./compute_rhs --target SEW_5p1    # 3-loop: computes E3, R3, boundary_3L (requires L=2 outputs)
+./compute_rhs --target SEW_5p1 --data-dir data_E7 --output-dir output_E7   # multi-project
+```
+
+Options:
+
+- `--target <SEW_FpL>`: target SEW name (required). Loop order `L = (F+L)/2`; supported `L = 2..5`;
+- `--data-dir <dir>`: data directory with seed files (default: `<exec_dir>/data`);
+- `--output-dir <dir>`: output directory (default: `<exec_dir>/output`);
+- `-h/--help`: print usage.
+
+### Inspection (`./inspect_tensors`)
+
+```bash
+./inspect_tensors   # no flags; reads from ./output/oneloop/E1.wxf and ./output/2loop/boundary_2L.wxf
+```
+
+Note: `inspect_tensors` reads from the current working directory (not the executable directory), so it must be run from the repository root.
+
 ## Tensor Files
 
-Tracked seed data:
+Tracked seed data (see `data/DESCRIPTION.md` for a complete listing with dimensions):
 
 - `data/dlogmat_E6.wxf`: RREF-reduced `E6` adjacency/integrability condition tensor. It corresponds to `bootstrap_E6_archive/dlogmatE6RREF.wxf` and has dimensions `{42, 42, 1191}`.
 - `data/FEC_1.wxf`: forward expansion coefficient seed, copied from `bootstrap_E6_archive/FCC_1.wxf`; layout `{basis_w, basis_{w-1}, letter}`.
 - `data/LEC_1.wxf`: backward expansion coefficient seed, obtained from `bootstrap_E6_archive/LCC_1.wxf` by transposing to the new layout `{basis_w, letter, basis_{w-1}}`.
+- `data/colmat42.wxf`: collinear seed on the FEC weight-1 space (`42 × 2`).
+- `data/cycrepmat.wxf`, `data/fliprepmat.wxf`, `data/parityrepmat.wxf`: cyclic / flip / parity symmetry representation matrices on the FEC weight-1 space (`42 × 42`).
+- `data/colprojdiv.wxf`: weight-1 colprojdiv seed (`11 × 2`); projects each letter slot to its 2-dim divergent subspace.
+- `data/colprojfin.wxf`: weight-1 colprojfin seed (`11 × 9`); projects each letter slot to its 9-dim finite subspace.
+- `data/E1.wxf`: one-loop collinear seed tensor (`11 × 11`, 5 nnz); renamed from the archive's `coloneloop.wxf`. Used by `compute_rhs`.
 
-Generated files:
+Generated files (under `output/`):
 
 - `output/FEC_w.wxf`: forward expansion coefficients;
 - `output/LEC_w.wxf`: backward expansion coefficients;
 - `output/SEW_fpl.wxf`: sewing matrices with layout `{sew_basis, FEC_f_basis, LEC_l_basis}`;
+- `output/collinear/`: collinear projection chain — `first_w{N}.wxf`, `last_w{N}.wxf`, `first_w{N}_basis.wxf`, `last_w{N}_basis.wxf`, `SEW_<name>_basis.wxf`, `colprojfin_w{N}.wxf`, `colprojdiv_w{N}.wxf`, `colprojfin_<sew_name>.wxf`, `colprojdiv_<sew_name>.wxf`, plus a `summary.txt`;
+- `output/cyclic/`, `output/flip/`, `output/parity/`: symmetry projections — `first_w{N}.wxf`, `last_w{N}.wxf`, `SEW_<name>.wxf`, `<target>_invariant.wxf`, plus a `summary.txt`;
+- `output/oneloop/E1.wxf`: copy of `data/E1.wxf` (written by `compute_rhs`);
+- `output/{L}loop/` (digit prefix — `2loop`, `3loop`, `4loop`, `5loop`): per-loop results from `compute_rhs` — `solMHV_LL.wxf`, `hepMHV_LL.wxf`, `E_LL.wxf`, `R_LL.wxf`, `boundary_LL.wxf`;
 - `logs/*.log`: stdout/stderr logs for each workflow step.
 
-`output/`, `logs/`, the compiled `bootstrap` executable, `temp/`, and `tmp/` are ignored by git.
+`output/`, `logs/`, the compiled `bootstrap` / `compute_rhs` / `inspect_tensors` executables, `temp/`, and `tmp/` are ignored by git.
+
+## Skills and Changelog
+
+- `skills/` holds per-module reference documents (concise, model-agnostic) for AI agents and new contributors. Start at `skills/README.md`.
+- `CHANGELOG.md` records all notable changes (new files, modified files, new functionality) grouped by date.
+- `data/DESCRIPTION.md` describes every seed file under `data/`.
 
 ## Format Notes
 
