@@ -39,6 +39,8 @@
 *.out
 *.app
 bootstrap
+compute_rhs
+inspect_tensors
 
 # Build directories
 build/

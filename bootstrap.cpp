@@ -159,7 +159,12 @@ void validate_args(const args_t& args) {
 			throw std::runtime_error("--solve-collinear requires --target <SEW_FpL|FEC_W> (e.g. SEW_5p1).");
 		}
 		if (args.rhs.empty()) {
-			throw std::runtime_error("--solve-collinear requires --rhs <rhs.wxf>.");
+			// Q7: exit cleanly (do not throw) when --rhs is missing.
+			std::cerr << "Error: --solve-collinear requires --rhs <rhs.wxf>." << std::endl;
+			std::cerr << "   The RHS is the collinear boundary expression (rank k, dims (11,...,11))." << std::endl;
+			std::cerr << "   Use '--rhs 0' for an empty RHS (all-zero boundary)." << std::endl;
+			std::cerr << "   The RHS can be computed by the compute_rhs module, or provided directly." << std::endl;
+			std::exit(1);
 		}
 		if (args.projection_type.empty()) {
 			throw std::runtime_error("--solve-collinear requires --projection <finite|divergent>.");
@@ -314,12 +319,29 @@ int main(int argc, char* argv[]) {
 				}
 			}
 
-			std::filesystem::path rhs_path = resolve_path(base, args.rhs);
+			// Handle --rhs 0 (empty RHS) vs --rhs <file>
+		// Q7: "--rhs 0" means the RHS is an empty (all-zero) tensor. We pass the
+		// literal "0" as a sentinel; run_collinear_solver constructs an all-zero b
+		// in-memory with shape derived from A (product of A.dims[1..] = n_constraints).
+		// This avoids writing a 0-nnz tensor to disk (the WXF writer cannot serialize
+		// 0-nnz tensors, and a rank-1 dim-{1} file would fail the dimension check).
+		std::filesystem::path rhs_path;
+		if (args.rhs == "0") {
+			rhs_path = "0";  // sentinel, not a file path
+		} else {
+			rhs_path = resolve_path(base, args.rhs);
+		}
+
+			// Pass SEW target name for SEW-level projection naming
+			std::string sew_name;
+			if (target.kind == target_kind_t::SEW) {
+				sew_name = target.name;
+			}
 
 			run_collinear_solver<scalar_t, index_t>(
 				target_basis_path, rhs_path, args.projection_type,
 				expansion_bases, chain_base_paths,
-				target_weight, data_dir, output_dir, F, opt);
+				target_weight, data_dir, output_dir, F, opt, sew_name);
 		}
 		else {
 			std::filesystem::path condition_path = resolve_path(base, args.condition);

@@ -20,8 +20,9 @@ template <typename T, typename index_t>
 struct linear_solve_result_t {
 	bool consistent = false;
 	bool unique = false;
-	sparse_vec<T, index_t> solution;   // particular solution (free vars = 0)
-	sparse_mat<T, index_t> null_space;  // empty if unique
+	size_t n_unknowns = 0;                  // logical length of the solution vector
+	sparse_vec<T, index_t> solution;       // particular solution (free vars = 0)
+	sparse_mat<T, index_t> null_space;     // empty if unique
 };
 
 // Solve M·c = b where M = A_reshaped^T.
@@ -106,6 +107,7 @@ linear_solve_result_t<T, index_t> solve_linear_system(
 		linear_solve_result_t<T, index_t> result;
 		result.consistent = true;
 		result.unique = false;
+		result.n_unknowns = n_unknowns;
 		// Null space = identity (all variables are free)
 		result.null_space = sparse_mat<T, index_t>(n_unknowns, n_unknowns);
 		for (size_t i = 0; i < n_unknowns; i++) {
@@ -243,6 +245,7 @@ linear_solve_result_t<T, index_t> solve_linear_system(
 	return {
 		.consistent = true,
 		.unique = unique,
+		.n_unknowns = n_unknowns,
 		.solution = std::move(solution),
 		.null_space = std::move(null_space)
 	};

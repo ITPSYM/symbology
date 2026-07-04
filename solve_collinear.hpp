@@ -223,20 +223,27 @@ collinear_proj_result_t<T, index_t> collinear_proj_step(
 // base_paths[i] provides the base tensor for weight (i + 2).
 // So base_paths.size() = target_weight - 1 (weights 2..target_weight).
 //
-// Output: output/collinear/colprojfin_w{N}.wxf, colprojdiv_w{N}.wxf
+// For FEC targets: all weights use colprojfin_w{N}.wxf / colprojdiv_w{N}.wxf
+// For SEW targets: FEC weights (2..target_weight-1) use colprojfin_w{N}.wxf,
+//   the SEW level (target_weight) uses colprojfin_SEW_{sew_name}.wxf /
+//   colprojdiv_SEW_{sew_name}.wxf to avoid name collision with FEC-level files.
+//
+// Output: output/collinear/
 
 template <typename T, typename index_t>
 void run_collinear_proj_chain(
 	const std::vector<std::filesystem::path>& base_paths,
 	const std::filesystem::path& data_dir,
 	const std::filesystem::path& output_dir,
-	const field_t& F, rref_option_t& opt) {
+	const field_t& F, rref_option_t& opt,
+	const std::string& sew_name = "") {
 
 	thread_pool* pool = &(opt->pool);
 	auto collinear_dir = output_dir / "collinear";
 	std::filesystem::create_directories(collinear_dir);
 
 	size_t target_weight = base_paths.size() + 1;  // base_paths covers weights 2..target_weight
+	bool is_sew_target = !sew_name.empty();
 
 	// Weight 1: copy seeds to output
 	auto seed_fin = data_dir / "colprojfin.wxf";
@@ -253,18 +260,33 @@ void run_collinear_proj_chain(
 	}
 
 	std::cout << "== Collinear projection chain (weights 1.." << target_weight << ") ==" << std::endl;
+	if (is_sew_target) {
+		std::cout << "   SEW target: " << sew_name << " (SEW level uses colprojdiv_SEW_"
+		          << sew_name << ".wxf naming)" << std::endl;
+	}
 
 	for (size_t i = 0; i < base_paths.size(); i++) {
 		size_t N = i + 2;
-		auto fin_N = collinear_dir / ("colprojfin_w" + std::to_string(N) + ".wxf");
-		auto div_N = collinear_dir / ("colprojdiv_w" + std::to_string(N) + ".wxf");
+		bool is_sew_level = is_sew_target && (N == target_weight);
+
+		// Determine output file names
+		std::filesystem::path fin_N, div_N;
+		if (is_sew_level) {
+			// sew_name already includes "SEW_" prefix (e.g. "SEW_5p1"),
+			// so the file name is colprojfin_SEW_5p1.wxf, not colprojfin_SEW_SEW_5p1.wxf
+			fin_N = collinear_dir / ("colprojfin_" + sew_name + ".wxf");
+			div_N = collinear_dir / ("colprojdiv_" + sew_name + ".wxf");
+		} else {
+			fin_N = collinear_dir / ("colprojfin_w" + std::to_string(N) + ".wxf");
+			div_N = collinear_dir / ("colprojdiv_w" + std::to_string(N) + ".wxf");
+		}
 
 		if (std::filesystem::exists(fin_N) && std::filesystem::exists(div_N)) {
-			std::cout << "Weight " << N << ": already computed, skipping." << std::endl;
+			std::cout << "Weight " << N << (is_sew_level ? " (SEW)" : "") << ": already computed, skipping." << std::endl;
 			continue;
 		}
 
-		std::cout << "Weight " << N << ":" << std::endl;
+		std::cout << "Weight " << N << (is_sew_level ? " (SEW " + sew_name + ")" : "") << ":" << std::endl;
 
 		// Load the collinear-reduced basis at weight N
 		const auto& base_path = base_paths[i];
@@ -429,7 +451,8 @@ void run_collinear_solver(
 	size_t target_weight,
 	const std::filesystem::path& data_dir,
 	const std::filesystem::path& output_dir,
-	const field_t& F, rref_option_t& opt) {
+	const field_t& F, rref_option_t& opt,
+	const std::string& sew_name = "") {
 
 	thread_pool* pool = &(opt->pool);
 	auto collinear_dir = output_dir / "collinear";
@@ -444,13 +467,23 @@ void run_collinear_solver(
 	std::cout << "   Chain bases: " << chain_base_paths.size() << " files" << std::endl;
 	std::cout << "========================================" << std::endl;
 
-	// Step 1: Ensure colprojfin/colprojdiv are computed for the target weight
-	auto proj_fin = collinear_dir / ("colprojfin_w" + std::to_string(target_weight) + ".wxf");
-	auto proj_div = collinear_dir / ("colprojdiv_w" + std::to_string(target_weight) + ".wxf");
+	// Step 1: Ensure colprojfin/colprojdiv are computed for the target weight.
+	// For SEW targets, the SEW-level projection uses colprojdiv_SEW_{sew_name}.wxf naming.
+	// For FEC targets, it uses colprojdiv_w{target_weight}.wxf.
+	bool is_sew_target = !sew_name.empty();
+	std::filesystem::path proj_fin, proj_div;
+	if (is_sew_target) {
+		// sew_name already includes "SEW_" prefix (e.g. "SEW_5p1")
+		proj_fin = collinear_dir / ("colprojfin_" + sew_name + ".wxf");
+		proj_div = collinear_dir / ("colprojdiv_" + sew_name + ".wxf");
+	} else {
+		proj_fin = collinear_dir / ("colprojfin_w" + std::to_string(target_weight) + ".wxf");
+		proj_div = collinear_dir / ("colprojdiv_w" + std::to_string(target_weight) + ".wxf");
+	}
 
 	if (!std::filesystem::exists(proj_fin) || !std::filesystem::exists(proj_div)) {
 		std::cout << "   Projections not found, computing chain..." << std::endl;
-		run_collinear_proj_chain<T, index_t>(chain_base_paths, data_dir, output_dir, F, opt);
+		run_collinear_proj_chain<T, index_t>(chain_base_paths, data_dir, output_dir, F, opt, sew_name);
 	}
 
 	// Step 2: Load the selected projection
@@ -508,10 +541,28 @@ void run_collinear_solver(
 	}
 	std::cout << std::endl;
 
-	// Step 5: Load RHS
-	auto rhs = projection_read_tensor<T, index_t>(rhs_path, F, pool);
-	std::cout << "--- RHS ---" << std::endl;
-	print_tensor_info(rhs);
+	// Step 5: Load RHS (or construct empty RHS for "--rhs 0")
+	// Q7: "--rhs 0" means the RHS is an all-zero tensor. We construct it in-memory
+	// with shape = expanded.dims[1..] so that b_size = n_constraints (matches A).
+	// This avoids the WXF writer limitation (cannot serialize 0-nnz tensors) and
+	// gives the empty RHS the correct shape for solve_linear_system's dimension check.
+	sparse_tensor<T, index_t, SPARSE_CSR> rhs;
+	if (rhs_path.string() == "0") {
+		std::vector<size_t> b_dims;
+		for (size_t i = 1; i < expanded.rank(); i++) {
+			b_dims.push_back(expanded.dim(i));
+		}
+		rhs = sparse_tensor<T, index_t, SPARSE_CSR>(b_dims);  // 0-nnz
+		std::cout << "--- RHS: empty (all-zero, dims=";
+		for (size_t i = 0; i < b_dims.size(); i++) {
+			std::cout << b_dims[i] << (i + 1 < b_dims.size() ? "x" : "");
+		}
+		std::cout << ") ---" << std::endl;
+	} else {
+		rhs = projection_read_tensor<T, index_t>(rhs_path, F, pool);
+		std::cout << "--- RHS ---" << std::endl;
+		print_tensor_info(rhs);
+	}
 
 	// Step 6: Solve the linear system
 	auto result = solve_linear_system<T, index_t>(
