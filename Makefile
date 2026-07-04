@@ -15,7 +15,7 @@ endif
 all: $(EXE)
 
 # executable file
-$(EXE): bootstrap.cpp bootstrap.hpp projection.hpp
+$(EXE): bootstrap.cpp bootstrap.hpp projection.hpp solve_symmetry.hpp
 	$(CXX) bootstrap.cpp -o $@ $(CXXFLAGS) $(LDLIBS)
 
 # clean target

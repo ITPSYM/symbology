@@ -1,5 +1,6 @@
 #include "bootstrap.hpp"
 #include "projection.hpp"
+#include "solve_symmetry.hpp"
 
 #include <cstdlib>
 
@@ -11,7 +12,8 @@ enum class bootstrap_mode_t {
 	extend,
 	sew,
 	induce,
-	project
+	project,
+	solve_symmetry
 };
 
 struct args_t {
@@ -33,6 +35,7 @@ void print_usage(const char* program) {
 	std::cerr << "  " << program << " --extend -c <condition.wxf> -l <LEC_in.wxf> -o <LEC_out.wxf>" << std::endl;
 	std::cerr << "  " << program << " --sew -c <condition.wxf> -f <FEC.wxf> -l <LEC.wxf> -o <SEW.wxf>" << std::endl;
 	std::cerr << "  " << program << " --project --symmetry <collinear|cyclic|flip|parity> --target <SEW_FpL>" << std::endl;
+	std::cerr << "  " << program << " --solve-symmetry --symmetry <cyclic|flip|parity> --target <SEW_FpL>" << std::endl;
 }
 
 std::string take_value(int& i, int argc, char* argv[], const std::string& flag) {
@@ -65,6 +68,9 @@ args_t parse_args(int argc, char* argv[]) {
 		}
 		else if (arg == "--project") {
 			set_mode(args, bootstrap_mode_t::project);
+		}
+		else if (arg == "--solve-symmetry") {
+			set_mode(args, bootstrap_mode_t::solve_symmetry);
 		}
 		else if (arg == "--symmetry") {
 			args.symmetry = take_value(i, argc, argv, arg);
@@ -115,6 +121,17 @@ void validate_args(const args_t& args) {
 		// Validate symmetry name early via get_symmetry_info (throws on unknown).
 		get_symmetry_info(args.symmetry);
 		// Validate target name early via parse_target (throws on bad format).
+		parse_target(args.target);
+		return;
+	}
+	if (args.mode == bootstrap_mode_t::solve_symmetry) {
+		if (args.symmetry.empty()) {
+			throw std::runtime_error("--solve-symmetry requires --symmetry <cyclic|flip|parity>.");
+		}
+		if (args.target.empty()) {
+			throw std::runtime_error("--solve-symmetry requires --target <SEW_FpL> (e.g. SEW_5p1).");
+		}
+		get_symmetry_info(args.symmetry);
 		parse_target(args.target);
 		return;
 	}
@@ -219,6 +236,11 @@ int main(int argc, char* argv[]) {
 		if (args.mode == bootstrap_mode_t::project) {
 			// --project runs its own recursive pipeline (no condition/first/last/output).
 			run_projection_pipeline<scalar_t, index_t>(
+				args.symmetry, args.target, base, F, opt);
+		}
+		else if (args.mode == bootstrap_mode_t::solve_symmetry) {
+			// --solve-symmetry: compute invariant space of the target's projection.
+			run_symmetry_solver<scalar_t, index_t>(
 				args.symmetry, args.target, base, F, opt);
 		}
 		else {
