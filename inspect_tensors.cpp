@@ -2,7 +2,8 @@
 //
 // Usage: ./inspect_tensors [--data-dir <dir>] [--output-dir <dir>]
 // Reads <output-dir>/oneloop/E1.wxf and <output-dir>/2loop/boundary_2L.wxf.
-// Defaults: --output-dir ./output (resolved against the executable directory).
+// Defaults: --output-dir resolves to <exec_dir>/output (relative paths are
+// resolved against the executable directory).
 #include "bootstrap.hpp"
 #include "projection.hpp"
 #include "tensor_shuffle.h"

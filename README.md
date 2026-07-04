@@ -222,11 +222,11 @@ Options:
 - `--induce`: reserved for future induced-transformation workflows;
 - `--project`: run the universal projection pipeline (requires `--symmetry`, `--target`);
 - `--solve-symmetry`: compute the invariant subspace of a target's projection (requires `--symmetry`, `--target`);
-- `--solve-collinear`: finite/divergent split + expansion + linear solve (requires `--target`, `--rhs`; `--projection` and `--basis` optional);
+- `--solve-collinear`: finite/divergent split + expansion + linear solve (requires `--target`, `--rhs`, `--projection`; `--basis` optional);
 - `--symmetry <collinear|cyclic|flip|parity>`: symmetry name for `--project` / `--solve-symmetry`;
 - `--target <SEW_FpL|FEC_W|LEC_W>`: target name (e.g. `SEW_5p1`, `FEC_3`, `LEC_2`);
 - `--rhs <rhs.wxf>` or `--rhs 0`: RHS path for `--solve-collinear`; `"0"` means an all-zero RHS constructed in-memory. Missing → exit code 1;
-- `--projection <finite|divergent>`: which projection to apply in `--solve-collinear` (default: `divergent`);
+- `--projection <finite|divergent>`: which projection to apply in `--solve-collinear` (required — no default);
 - `--basis <basis.wxf>`: expansion basis file (repeatable; highest weight first). Auto-detected as `first_w{N}_basis.wxf` if omitted;
 - `--data-dir <dir>`: data directory with seed files (default: `<exec_dir>/data`). Used by `--project`, `--solve-symmetry`, `--solve-collinear`; ignored by `--extend` / `--sew` (which use explicit `-c`/`-f`/`-l`/`-o` paths);
 - `--output-dir <dir>`: output directory (default: `<exec_dir>/output`). Same scope as `--data-dir`;

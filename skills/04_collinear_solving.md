@@ -19,7 +19,8 @@ be divergent-free (verified by the indicator-vector method).
 
 ```bash
 ./bootstrap --solve-collinear --target <SEW_FpL> --rhs <rhs.wxf|0> \
-    [--projection <finite|divergent>] [--basis <basis.wxf> ...]
+    --projection <finite|divergent> [--basis <basis.wxf> ...] \
+    [--data-dir <dir>] [--output-dir <dir>]
 ```
 
 ## Flags
@@ -29,8 +30,10 @@ be divergent-free (verified by the indicator-vector method).
 | `--solve-collinear` | Run the collinear solver. |
 | `--target <SEW_FpL>` | Target SEW name (e.g. `SEW_3p1` for 2-loop, `SEW_5p1` for 3-loop). |
 | `--rhs <rhs.wxf>` or `--rhs 0` | RHS path. Required — exits with code 1 if missing. `--rhs 0` means an all-zero RHS constructed in-memory. |
-| `--projection <finite\|divergent>` | Which projection to apply. Default: `divergent`. |
+| `--projection <finite\|divergent>` | Which projection to apply. Required — no default. |
 | `--basis <basis.wxf>` | Expansion basis file (repeatable; highest weight first). If omitted, auto-detected as `first_w{N}_basis.wxf` for weights `target_weight-1` down to 2. |
+| `--data-dir <dir>` | Data directory with seed files (default: `<exec_dir>/data`). Resolved against the executable directory. |
+| `--output-dir <dir>` | Output directory (default: `<exec_dir>/output`). Same resolution as `--data-dir`. |
 
 ## How it works
 
@@ -112,7 +115,13 @@ Empty projections (0 rows) are not written.
 
 - **`--rhs` is required.** Missing `--rhs` → exit code 1 with a helpful
   message. `--rhs 0` means an empty (all-zero) RHS tensor.
-- **SEW-level naming**: `colprojdiv_SEW_<name>.wxf` (e.g.
+- **`--projection` is required** — there is no default. Pass either
+  `finite` or `divergent` explicitly.
+- **`--data-dir` / `--output-dir`**: default to `<exec_dir>/data` and
+  `<exec_dir>/output`. Relative paths resolve against the executable
+  directory (same convention as `bootstrap`).
+- **SEW-level naming**: `colprojdiv_<sew_name>.wxf` where `sew_name`
+  already includes the `SEW_` prefix (e.g.
   `colprojdiv_SEW_5p1.wxf`). The old name `colprojdiv_w6.wxf` was
   renamed to this.
 - **Slot order**: must remain in natural ascending weight order

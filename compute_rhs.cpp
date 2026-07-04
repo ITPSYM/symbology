@@ -37,8 +37,8 @@ void print_usage(const char* program) {
 	std::cerr << std::endl;
 	std::cerr << "Options:" << std::endl;
 	std::cerr << "  --target <SEW_FpL>  Target SEW name (e.g. SEW_3p1 for 2-loop, SEW_5p1 for 3-loop)" << std::endl;
-	std::cerr << "  --data-dir <dir>    Data directory with seed files (default: data/)" << std::endl;
-	std::cerr << "  --output-dir <dir>  Output directory (default: output/)" << std::endl;
+	std::cerr << "  --data-dir <dir>    Data directory with seed files (default: <exec_dir>/data)" << std::endl;
+	std::cerr << "  --output-dir <dir>  Output directory (default: <exec_dir>/output)" << std::endl;
 	std::cerr << "  -h, --help          Show this help message" << std::endl;
 }
 

@@ -92,12 +92,21 @@ ofs.write(reinterpret_cast<const char*>(u8arr.data()), u8arr.size());
 auto tensor_csr = sparse_tensor_read_wxf<T, index_t>(bytes, F, pool);
 ```
 
-The project's `bootstrap.hpp` provides wrappers:
-- `read_tensor(path, F, pool)` → CSR tensor (also prints CRC32).
-- `write_tensor_file(path, std::move(tensor_csr))` → writes WXF file.
-- `projection_read_tensor` / `projection_write_tensor` (in
-  `projection.hpp`) — same but also `create_directories` on the parent
-  path before writing.
+The project provides thin wrappers around the SparseRREF I/O routines.
+They live in different headers depending on which module uses them:
+
+- `bootstrap.cpp`:
+  - `read_tensor(path, F, pool)` → CSR tensor (also prints CRC32).
+  - `write_tensor(path, std::move(tensor_csr))` → writes WXF file
+    (also prints CRC32, creates parent directories).
+- `compute_rhs.hpp`:
+  - `write_tensor_file<T, index_t>(path, std::move(tensor_csr))` →
+    writes WXF file (used by the RHS computation module).
+- `projection.hpp`:
+  - `projection_read_tensor<T, index_t>(path, F, pool)` → CSR tensor.
+  - `projection_write_tensor<T, index_t>(path, std::move(tensor_csr),
+    pool)` → writes WXF file (creates parent directories before
+    writing).
 
 ## Tensor introspection
 
