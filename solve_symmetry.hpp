@@ -78,7 +78,7 @@ void run_symmetry_solver(
 
 	std::filesystem::path output_dir = base_path / "output";
 	std::filesystem::path sym_dir = output_dir / sym.name;
-	std::filesystem::path projection_path = sym_dir / (target.name + ".wxf");
+	std::filesystem::path projection_path = sym_dir / projection_filename(target);
 	std::filesystem::path invariant_path = sym_dir / (target.name + "_invariant.wxf");
 
 	// Step 1: Ensure projection matrix exists

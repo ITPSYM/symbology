@@ -34,8 +34,8 @@ void print_usage(const char* program) {
 	std::cerr << "  " << program << " --extend -c <condition.wxf> -f <FEC_in.wxf> -o <FEC_out.wxf>" << std::endl;
 	std::cerr << "  " << program << " --extend -c <condition.wxf> -l <LEC_in.wxf> -o <LEC_out.wxf>" << std::endl;
 	std::cerr << "  " << program << " --sew -c <condition.wxf> -f <FEC.wxf> -l <LEC.wxf> -o <SEW.wxf>" << std::endl;
-	std::cerr << "  " << program << " --project --symmetry <collinear|cyclic|flip|parity> --target <SEW_FpL>" << std::endl;
-	std::cerr << "  " << program << " --solve-symmetry --symmetry <cyclic|flip|parity> --target <SEW_FpL>" << std::endl;
+	std::cerr << "  " << program << " --project --symmetry <collinear|cyclic|flip|parity> --target <SEW_FpL|FEC_W|LEC_W>" << std::endl;
+	std::cerr << "  " << program << " --solve-symmetry --symmetry <cyclic|flip|parity> --target <SEW_FpL|FEC_W|LEC_W>" << std::endl;
 }
 
 std::string take_value(int& i, int argc, char* argv[], const std::string& flag) {

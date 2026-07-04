@@ -369,20 +369,56 @@ projection_result_t<T, index_t> compute_stage1_projection(
 
 // ========== Target parsing ==========
 
+enum class target_kind_t { SEW, FEC, LEC };
+
 struct target_t {
-	std::string name;       // "SEW_5p1"
-	size_t fec_weight;      // 5
-	size_t lec_weight;      // 1
+	std::string name;       // "SEW_5p1", "FEC_3", "LEC_2"
+	target_kind_t kind;     // SEW, FEC, or LEC
+	size_t fec_weight;      // FEC chain weight (for SEW: F; for FEC_W: W; for LEC: 1)
+	size_t lec_weight;      // LEC chain weight (for SEW: L; for LEC_W: W; for FEC: 1)
 };
 
+// Parse target name. Recognized formats:
+//   SEW_FpL  (e.g. SEW_5p1) -> kind=SEW, fec_weight=F, lec_weight=L
+//   FEC_W    (e.g. FEC_3)   -> kind=FEC, fec_weight=W, lec_weight=1
+//   LEC_W    (e.g. LEC_2)   -> kind=LEC, fec_weight=1, lec_weight=W
 inline target_t parse_target(const std::string& name) {
-	std::regex re("SEW_(\\d+)p(\\d+)", std::regex::icase);
 	std::smatch match;
-	if (!std::regex_match(name, match, re)) {
-		throw std::runtime_error("Invalid target name: " + name
-			+ ". Expected format: SEW_FpL (e.g., SEW_5p1)");
+	// SEW_FpL
+	std::regex re_sew("SEW_(\\d+)p(\\d+)", std::regex::icase);
+	if (std::regex_match(name, match, re_sew)) {
+		return {name, target_kind_t::SEW, std::stoul(match[1].str()), std::stoul(match[2].str())};
 	}
-	return {name, std::stoul(match[1].str()), std::stoul(match[2].str())};
+	// FEC_W
+	std::regex re_fec("FEC_(\\d+)", std::regex::icase);
+	if (std::regex_match(name, match, re_fec)) {
+		size_t w = std::stoul(match[1].str());
+		return {name, target_kind_t::FEC, w, 1};
+	}
+	// LEC_W
+	std::regex re_lec("LEC_(\\d+)", std::regex::icase);
+	if (std::regex_match(name, match, re_lec)) {
+		size_t w = std::stoul(match[1].str());
+		return {name, target_kind_t::LEC, 1, w};
+	}
+	throw std::runtime_error("Invalid target name: " + name
+		+ ". Expected: SEW_FpL (e.g. SEW_5p1), FEC_W (e.g. FEC_3), or LEC_W (e.g. LEC_2)");
+}
+
+// Infer the projection filename for a target.
+//   SEW_FpL -> "SEW_FpL.wxf"
+//   FEC_W   -> "first_wW.wxf"
+//   LEC_W   -> "last_wW.wxf"
+inline std::string projection_filename(const target_t& target) {
+	switch (target.kind) {
+		case target_kind_t::SEW:
+			return target.name + ".wxf";
+		case target_kind_t::FEC:
+			return "first_w" + std::to_string(target.fec_weight) + ".wxf";
+		case target_kind_t::LEC:
+			return "last_w" + std::to_string(target.lec_weight) + ".wxf";
+	}
+	throw std::runtime_error("projection_filename: unknown target kind");
 }
 
 // ========== Symmetry info ==========
@@ -465,7 +501,10 @@ void run_projection_pipeline(
 	std::cout << "========================================" << std::endl;
 	std::cout << "Projection pipeline" << std::endl;
 	std::cout << "  Symmetry: " << sym.name << " (is_collinear=" << sym.is_collinear << ")" << std::endl;
-	std::cout << "  Target: " << target.name << " (FEC weight=" << target.fec_weight
+	std::cout << "  Target: " << target.name << " (kind="
+	          << (target.kind == target_kind_t::SEW ? "SEW" :
+	              target.kind == target_kind_t::FEC ? "FEC" : "LEC")
+	          << ", FEC weight=" << target.fec_weight
 	          << ", LEC weight=" << target.lec_weight << ")" << std::endl;
 	std::cout << "========================================" << std::endl;
 
@@ -513,7 +552,7 @@ void run_projection_pipeline(
 		records.push_back(make_file_record(sym_dir / "last_w1.wxf", dims, nnz));
 	}
 
-	// ===== FEC chain: weights 2..fec_weight =====
+	// ===== FEC chain: weights 2..fec_weight (skip for LEC-only targets) =====
 	for (size_t w = 2; w <= target.fec_weight; w++) {
 		std::cout << std::endl << "=== FEC weight " << w << " ===" << std::endl;
 
@@ -587,40 +626,42 @@ void run_projection_pipeline(
 		}
 	}
 
-	// ===== SEW projection =====
-	std::cout << std::endl << "=== SEW projection: " << target.name << " ===" << std::endl;
+	// ===== SEW projection (only for SEW targets) =====
+	if (target.kind == target_kind_t::SEW) {
+		std::cout << std::endl << "=== SEW projection: " << target.name << " ===" << std::endl;
 
-	auto SEW = projection_read_tensor<T, index_t>(
-		output_dir / (target.name + ".wxf"), F, pool);
-	auto first_final = projection_read_tensor<T, index_t>(
-		sym_dir / ("first_w" + std::to_string(target.fec_weight) + ".wxf"), F, pool);
-	auto last_final = projection_read_tensor<T, index_t>(
-		sym_dir / ("last_w" + std::to_string(target.lec_weight) + ".wxf"), F, pool);
+		auto SEW = projection_read_tensor<T, index_t>(
+			output_dir / (target.name + ".wxf"), F, pool);
+		auto first_final = projection_read_tensor<T, index_t>(
+			sym_dir / ("first_w" + std::to_string(target.fec_weight) + ".wxf"), F, pool);
+		auto last_final = projection_read_tensor<T, index_t>(
+			sym_dir / ("last_w" + std::to_string(target.lec_weight) + ".wxf"), F, pool);
 
-	// SEW dims: (sew_basis, FEC_basis, LEC_basis)
-	// map_first = *first@fec_weight for axis 1, map_second = *last@lec_weight for axis 2
-	auto result = compute_stage1_projection<T, index_t>(
-		std::move(SEW), std::move(first_final), std::move(last_final),
-		sym.is_collinear, F, opt);
+		// SEW dims: (sew_basis, FEC_basis, LEC_basis)
+		// map_first = *first@fec_weight for axis 1, map_second = *last@lec_weight for axis 2
+		auto result = compute_stage1_projection<T, index_t>(
+			std::move(SEW), std::move(first_final), std::move(last_final),
+			sym.is_collinear, F, opt);
 
-	std::cout << "--- SEW projection ---" << std::endl;
-	print_tensor_info(result.projection);
-	auto p_dims = result.projection.dims(); auto p_nnz = result.projection.nnz();
-	projection_write_tensor(
-		sym_dir / (target.name + ".wxf"),
-		std::move(result.projection), pool);
-	records.push_back(make_file_record(
-		sym_dir / (target.name + ".wxf"), p_dims, p_nnz));
-
-	if (sym.is_collinear) {
-		std::cout << "--- SEW basis ---" << std::endl;
-		print_tensor_info(result.basis);
-		auto b_dims = result.basis.dims(); auto b_nnz = result.basis.nnz();
+		std::cout << "--- SEW projection ---" << std::endl;
+		print_tensor_info(result.projection);
+		auto p_dims = result.projection.dims(); auto p_nnz = result.projection.nnz();
 		projection_write_tensor(
-			sym_dir / (target.name + "_basis.wxf"),
-			std::move(result.basis), pool);
+			sym_dir / (target.name + ".wxf"),
+			std::move(result.projection), pool);
 		records.push_back(make_file_record(
-			sym_dir / (target.name + "_basis.wxf"), b_dims, b_nnz));
+			sym_dir / (target.name + ".wxf"), p_dims, p_nnz));
+
+		if (sym.is_collinear) {
+			std::cout << "--- SEW basis ---" << std::endl;
+			print_tensor_info(result.basis);
+			auto b_dims = result.basis.dims(); auto b_nnz = result.basis.nnz();
+			projection_write_tensor(
+				sym_dir / (target.name + "_basis.wxf"),
+				std::move(result.basis), pool);
+			records.push_back(make_file_record(
+				sym_dir / (target.name + "_basis.wxf"), b_dims, b_nnz));
+		}
 	}
 
 	// Write summary
