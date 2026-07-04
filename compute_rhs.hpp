@@ -299,13 +299,53 @@ sparse_tensor<T, index_t, SPARSE_COO> compute_boundary(
 	throw std::runtime_error("compute_boundary: L=" + std::to_string(L) + " not supported (max 5)");
 }
 
-// ========== Helper: run a bootstrap command and log it ==========
+// ========== Helper: locate the dlogmat seed in data_dir ==========
+//
+// The condition tensor is named dlogmat_<group>.wxf (e.g. dlogmat_E6.wxf).
+// For multi-project support we scan data_dir for the first match rather
+// than hardcoding the group name.
 
-inline void run_bootstrap_cmd(const std::string& cmd) {
-	std::cout << "   [bootstrap] " << cmd << std::endl;
-	int ret = std::system(cmd.c_str());
+inline std::filesystem::path find_dlogmat(const std::filesystem::path& data_dir) {
+	if (!std::filesystem::exists(data_dir)) {
+		throw std::runtime_error("find_dlogmat: data dir not found: " + data_dir.string());
+	}
+	std::filesystem::path found;
+	for (auto& entry : std::filesystem::directory_iterator(data_dir)) {
+		auto name = entry.path().filename().string();
+		if (name.rfind("dlogmat_", 0) == 0 && entry.path().extension() == ".wxf") {
+			found = entry.path();
+			break;
+		}
+	}
+	if (found.empty()) {
+		throw std::runtime_error("find_dlogmat: no dlogmat_*.wxf found in " + data_dir.string());
+	}
+	return found;
+}
+
+// ========== Helper: run a bootstrap command and log it ==========
+//
+// All bootstrap subprocess invocations MUST receive --data-dir and --output-dir
+// so that --project / --solve-symmetry / --solve-collinear auto-invocations inside
+// the subprocess read from / write to the same project directories as compute_rhs.
+// The paths must be absolute because the subprocess resolves relative paths
+// against its own executable directory (which is the cwd when invoked as
+// "./bootstrap").
+
+inline void run_bootstrap_cmd(
+	const std::string& cmd,
+	const std::filesystem::path& data_dir,
+	const std::filesystem::path& output_dir) {
+
+	auto abs_data = std::filesystem::absolute(data_dir);
+	auto abs_output = std::filesystem::absolute(output_dir);
+	std::string full = cmd
+		+ " --data-dir " + abs_data.string()
+		+ " --output-dir " + abs_output.string();
+	std::cout << "   [bootstrap] " << full << std::endl;
+	int ret = std::system(full.c_str());
 	if (ret != 0) {
-		throw std::runtime_error("bootstrap command failed (code " + std::to_string(ret) + "): " + cmd);
+		throw std::runtime_error("bootstrap command failed (code " + std::to_string(ret) + "): " + full);
 	}
 }
 
@@ -318,10 +358,7 @@ inline void ensure_fec_tensors(
 	size_t F, const std::filesystem::path& data_dir,
 	const std::filesystem::path& output_dir) {
 
-	auto dlogmat = data_dir / "dlogmat_E6.wxf";
-	if (!std::filesystem::exists(dlogmat)) {
-		throw std::runtime_error("ensure_fec_tensors: dlogmat not found: " + dlogmat.string());
-	}
+	auto dlogmat = find_dlogmat(data_dir);
 
 	auto prev_fec = data_dir / "FEC_1.wxf";
 	if (!std::filesystem::exists(prev_fec)) {
@@ -335,10 +372,10 @@ inline void ensure_fec_tensors(
 		}
 		std::cout << "   Generating FEC_" << w << " via bootstrap --extend..." << std::endl;
 		std::string cmd = "./bootstrap --extend"
-			+ std::string(" -c ") + dlogmat.string()
-			+ std::string(" -f ") + prev_fec.string()
-			+ std::string(" -o ") + curr_fec.string();
-		run_bootstrap_cmd(cmd);
+			+ std::string(" -c ") + std::filesystem::absolute(dlogmat).string()
+			+ std::string(" -f ") + std::filesystem::absolute(prev_fec).string()
+			+ std::string(" -o ") + std::filesystem::absolute(curr_fec).string();
+		run_bootstrap_cmd(cmd, data_dir, output_dir);
 		if (!std::filesystem::exists(curr_fec)) {
 			throw std::runtime_error("ensure_fec_tensors: bootstrap did not produce " + curr_fec.string());
 		}
@@ -376,18 +413,18 @@ inline void ensure_sew_basis(
 	auto sew_tensor_path = output_dir / (sew_name + ".wxf");
 	if (!std::filesystem::exists(sew_tensor_path)) {
 		std::cout << "   Generating SEW tensor via bootstrap --sew..." << std::endl;
-		auto dlogmat = data_dir / "dlogmat_E6.wxf";
+		auto dlogmat = find_dlogmat(data_dir);
 		auto fec_path = output_dir / ("FEC_" + std::to_string(F) + ".wxf");
 		auto lec_path = data_dir / ("LEC_" + std::to_string(L) + ".wxf");
 		if (!std::filesystem::exists(lec_path)) {
 			throw std::runtime_error("ensure_sew_basis: LEC file not found: " + lec_path.string());
 		}
 		std::string cmd = "./bootstrap --sew"
-			+ std::string(" -c ") + dlogmat.string()
-			+ std::string(" -f ") + fec_path.string()
-			+ std::string(" -l ") + lec_path.string()
-			+ std::string(" -o ") + sew_tensor_path.string();
-		run_bootstrap_cmd(cmd);
+			+ std::string(" -c ") + std::filesystem::absolute(dlogmat).string()
+			+ std::string(" -f ") + std::filesystem::absolute(fec_path).string()
+			+ std::string(" -l ") + std::filesystem::absolute(lec_path).string()
+			+ std::string(" -o ") + std::filesystem::absolute(sew_tensor_path).string();
+		run_bootstrap_cmd(cmd, data_dir, output_dir);
 		if (!std::filesystem::exists(sew_tensor_path)) {
 			throw std::runtime_error("ensure_sew_basis: bootstrap --sew did not produce " + sew_tensor_path.string());
 		}
@@ -396,7 +433,7 @@ inline void ensure_sew_basis(
 	// Step 3: Run --project to generate collinear projections and bases
 	std::cout << "   Running bootstrap --project --symmetry collinear --target " << sew_name << "..." << std::endl;
 	std::string cmd = "./bootstrap --project --symmetry collinear --target " + sew_name;
-	run_bootstrap_cmd(cmd);
+	run_bootstrap_cmd(cmd, data_dir, output_dir);
 
 	if (!std::filesystem::exists(sew_basis_path)) {
 		throw std::runtime_error("ensure_sew_basis: --project did not produce " + sew_basis_path.string());

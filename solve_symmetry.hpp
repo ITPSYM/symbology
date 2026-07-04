@@ -61,7 +61,8 @@ template <typename T, typename index_t>
 void run_symmetry_solver(
 	const std::string& symmetry_name,
 	const std::string& target_name,
-	const std::filesystem::path& base_path,
+	const std::filesystem::path& data_dir,
+	const std::filesystem::path& output_dir,
 	const field_t& F,
 	rref_option_t& opt) {
 
@@ -74,9 +75,10 @@ void run_symmetry_solver(
 	std::cout << "Symmetry solving" << std::endl;
 	std::cout << "  Symmetry: " << sym.name << std::endl;
 	std::cout << "  Target: " << target.name << std::endl;
+	std::cout << "  Data dir:   " << data_dir.string() << std::endl;
+	std::cout << "  Output dir: " << output_dir.string() << std::endl;
 	std::cout << "========================================" << std::endl;
 
-	std::filesystem::path output_dir = base_path / "output";
 	std::filesystem::path sym_dir = output_dir / sym.name;
 	std::filesystem::path projection_path = sym_dir / projection_filename(target);
 	std::filesystem::path invariant_path = sym_dir / (target.name + "_invariant.wxf");
@@ -85,7 +87,7 @@ void run_symmetry_solver(
 	if (!std::filesystem::exists(projection_path)) {
 		std::cout << "Projection matrix not found: " << projection_path << std::endl;
 		std::cout << "Running projection pipeline to generate it..." << std::endl;
-		run_projection_pipeline<T, index_t>(symmetry_name, target_name, base_path, F, opt);
+		run_projection_pipeline<T, index_t>(symmetry_name, target_name, data_dir, output_dir, F, opt);
 	}
 
 	// Step 2: Load projection matrix

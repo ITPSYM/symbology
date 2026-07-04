@@ -109,12 +109,21 @@ int main(int argc, char* argv[]) {
 			base = std::filesystem::current_path();
 		}
 
-		if (args.data_dir.empty()) {
-			args.data_dir = base / "data";
-		}
-		if (args.output_dir.empty()) {
-			args.output_dir = base / "output";
-		}
+		// Resolve paths relative to the executable directory.
+	// Matches bootstrap.cpp/inspect_tensors.cpp: relative --data-dir/--output-dir
+	// are resolved against `base` (the executable's parent directory), not cwd.
+	// This keeps "./compute_rhs --data-dir data_test" working from any cwd as long
+	// as the binary is invoked from the repo root (the common case).
+	if (args.data_dir.empty()) {
+		args.data_dir = base / "data";
+	} else if (!args.data_dir.is_absolute()) {
+		args.data_dir = base / args.data_dir;
+	}
+	if (args.output_dir.empty()) {
+		args.output_dir = base / "output";
+	} else if (!args.output_dir.is_absolute()) {
+		args.output_dir = base / args.output_dir;
+	}
 
 		std::cout << "========================================" << std::endl;
 		std::cout << "Compute RHS (collinear boundary)" << std::endl;

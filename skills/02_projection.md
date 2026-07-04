@@ -75,10 +75,13 @@ seed listed above. Also reads previously-written `first_w{N-1}.wxf` /
 
 ## Key files
 
-- `projection.hpp` — `run_projection_pipeline(base_path, target, sym, ...)`.
-  All paths are hardcoded as `base_path/"data"` and
-  `base_path/"output"/sym.name`.
+- `projection.hpp` — `run_projection_pipeline(symmetry, target, data_dir, output_dir, F, opt)`.
+  Reads seed tensors from `data_dir` and writes to `output_dir/sym.name`.
+  `bootstrap.cpp` resolves `--data-dir` / `--output-dir` (relative to the
+  executable directory) and passes them in; defaults are `<exec_dir>/data` and
+  `<exec_dir>/output`.
 - `run_projection.sh` — driver script that loops over all four symmetries.
+  Honors `PROJECT=<name>` (uses `data_<name>/` + `output_<name>/`).
 
 ## Conventions
 

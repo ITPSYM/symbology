@@ -261,8 +261,11 @@ void run_collinear_proj_chain(
 
 	std::cout << "== Collinear projection chain (weights 1.." << target_weight << ") ==" << std::endl;
 	if (is_sew_target) {
-		std::cout << "   SEW target: " << sew_name << " (SEW level uses colprojdiv_SEW_"
-		          << sew_name << ".wxf naming)" << std::endl;
+		// sew_name already includes the "SEW_" prefix (e.g. "SEW_3p1"), so the
+		// SEW-level file is colprojdiv_<sew_name>.wxf (e.g. colprojdiv_SEW_3p1.wxf),
+		// NOT colprojdiv_SEW_SEW_3p1.wxf.
+		std::cout << "   SEW target: " << sew_name
+		          << " (SEW level uses colprojdiv_" << sew_name << ".wxf naming)" << std::endl;
 	}
 
 	for (size_t i = 0; i < base_paths.size(); i++) {

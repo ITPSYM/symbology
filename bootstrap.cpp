@@ -31,6 +31,10 @@ struct args_t {
 	std::filesystem::path rhs;
 	std::string projection_type;  // "finite" or "divergent"
 	std::vector<std::filesystem::path> basis_paths;  // expansion bases (highest weight first)
+	// --data-dir / --output-dir (for --project, --solve-symmetry, --solve-collinear).
+	// Empty means "use default" (resolved against the executable directory after parsing).
+	std::filesystem::path data_dir;
+	std::filesystem::path output_dir;
 };
 
 // bootstrap.cpp owns only the command-line contract and WXF I/O.
@@ -40,9 +44,12 @@ void print_usage(const char* program) {
 	std::cerr << "  " << program << " --extend -c <condition.wxf> -f <FEC_in.wxf> -o <FEC_out.wxf>" << std::endl;
 	std::cerr << "  " << program << " --extend -c <condition.wxf> -l <LEC_in.wxf> -o <LEC_out.wxf>" << std::endl;
 	std::cerr << "  " << program << " --sew -c <condition.wxf> -f <FEC.wxf> -l <LEC.wxf> -o <SEW.wxf>" << std::endl;
-	std::cerr << "  " << program << " --project --symmetry <collinear|cyclic|flip|parity> --target <SEW_FpL|FEC_W|LEC_W>" << std::endl;
-	std::cerr << "  " << program << " --solve-symmetry --symmetry <cyclic|flip|parity> --target <SEW_FpL|FEC_W|LEC_W>" << std::endl;
-	std::cerr << "  " << program << " --solve-collinear --target <SEW_FpL|FEC_W> --rhs <rhs.wxf> --projection <finite|divergent> [--basis <basis.wxf> ...]" << std::endl;
+	std::cerr << "  " << program << " --project --symmetry <collinear|cyclic|flip|parity> --target <SEW_FpL|FEC_W|LEC_W> [--data-dir <dir>] [--output-dir <dir>]" << std::endl;
+	std::cerr << "  " << program << " --solve-symmetry --symmetry <cyclic|flip|parity> --target <SEW_FpL|FEC_W|LEC_W> [--data-dir <dir>] [--output-dir <dir>]" << std::endl;
+	std::cerr << "  " << program << " --solve-collinear --target <SEW_FpL|FEC_W> --rhs <rhs.wxf> --projection <finite|divergent> [--basis <basis.wxf> ...] [--data-dir <dir>] [--output-dir <dir>]" << std::endl;
+	std::cerr << std::endl;
+	std::cerr << "  --data-dir defaults to <exec_dir>/data; --output-dir defaults to <exec_dir>/output." << std::endl;
+	std::cerr << "  --extend / --sew ignore --data-dir / --output-dir (use explicit -c/-f/-l/-o paths)." << std::endl;
 }
 
 std::string take_value(int& i, int argc, char* argv[], const std::string& flag) {
@@ -111,6 +118,12 @@ args_t parse_args(int argc, char* argv[]) {
 		}
 		else if (arg == "-o" || arg == "--output") {
 			args.output = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "--data-dir") {
+			args.data_dir = take_value(i, argc, argv, arg);
+		}
+		else if (arg == "--output-dir") {
+			args.output_dir = take_value(i, argc, argv, arg);
 		}
 		else if (arg == "-h" || arg == "--help") {
 			print_usage(argv[0]);
@@ -276,20 +289,25 @@ int main(int argc, char* argv[]) {
 
 		if (args.mode == bootstrap_mode_t::project) {
 			// --project runs its own recursive pipeline (no condition/first/last/output).
+			// Resolve data_dir / output_dir with defaults base/"data", base/"output".
+			auto data_dir = args.data_dir.empty() ? (base / "data") : resolve_path(base, args.data_dir);
+			auto output_dir = args.output_dir.empty() ? (base / "output") : resolve_path(base, args.output_dir);
 			run_projection_pipeline<scalar_t, index_t>(
-				args.symmetry, args.target, base, F, opt);
+				args.symmetry, args.target, data_dir, output_dir, F, opt);
 		}
 		else if (args.mode == bootstrap_mode_t::solve_symmetry) {
 			// --solve-symmetry: compute invariant space of the target's projection.
+			auto data_dir = args.data_dir.empty() ? (base / "data") : resolve_path(base, args.data_dir);
+			auto output_dir = args.output_dir.empty() ? (base / "output") : resolve_path(base, args.output_dir);
 			run_symmetry_solver<scalar_t, index_t>(
-				args.symmetry, args.target, base, F, opt);
+				args.symmetry, args.target, data_dir, output_dir, F, opt);
 		}
 		else if (args.mode == bootstrap_mode_t::solve_collinear) {
 			// --solve-collinear: finite/divergent split + expansion + linear solve.
 			auto target = parse_target(args.target);
 
-			std::filesystem::path data_dir = base / "data";
-			std::filesystem::path output_dir = base / "output";
+			auto data_dir = args.data_dir.empty() ? (base / "data") : resolve_path(base, args.data_dir);
+			auto output_dir = args.output_dir.empty() ? (base / "output") : resolve_path(base, args.output_dir);
 			auto collinear_dir = output_dir / "collinear";
 
 			// Determine target weight and target basis path

@@ -117,12 +117,9 @@ The default (no tag) is `data/` + `output/`, which is backward compatible.
 ### Conventions
 
 - Inside `data_<PROJECT>/`, the seed files keep the same **roles** as in `data/` (see `data/DESCRIPTION.md`), but encode the symmetry group in the filename where it matters: `dlogmat_<group>.wxf` (e.g. `dlogmat_E7.wxf`), `FEC_1.wxf`, `LEC_1.wxf`, `colmat<N>.wxf` (where `<N>` is the FEC weight-1 dimension — `42` for `E6`), `colprojdiv.wxf`, `colprojfin.wxf`, `<group>repmat_*.wxf`, `E1.wxf`.
-- All executables accept `--data-dir <dir>` and `--output-dir <dir>`. `compute_rhs` already exposes these; for `bootstrap`'s `--project` / `--solve-symmetry` / `--solve-collinear` modes, the override is planned but not yet wired through (see `CHANGELOG.md`).
-- A convenience shorthand `--project <P>` (resolving to `data_<P>/` + `output_<P>/`) is planned.
-
-### Current limitation
-
-`compute_rhs` accepts `--data-dir` / `--output-dir`, but when it shells out to `./bootstrap --extend` / `--sew` / `--project` to generate missing prerequisites, it does **not** propagate the override. Until this is fixed, run the bootstrap prerequisites manually with the correct directories first, then invoke `compute_rhs` with matching `--data-dir` / `--output-dir`. See `CHANGELOG.md` and `skills/05_compute_rhs.md`.
+- All executables accept `--data-dir <dir>` and `--output-dir <dir>`. Relative paths are resolved against the executable directory. The flags are threaded through every pipeline mode: `bootstrap --project` / `--solve-symmetry` / `--solve-collinear`, `compute_rhs`, and `inspect_tensors`. When `compute_rhs` shells out to `./bootstrap --extend` / `--sew` / `--project` to generate missing prerequisites, it passes the absolute `--data-dir` / `--output-dir` to the subprocess so the same project directories are used end to end.
+- The driver scripts (`run_workflow.sh`, `run_projection.sh`, `run_solve.sh`) honor a `PROJECT=<name>` environment variable: setting `PROJECT=E7` makes them use `data_E7/` + `output_E7/`. With `PROJECT` unset they default to `data/` + `output/` (backward compatible).
+- `run_workflow.sh` auto-detects the condition tensor as `dlogmat_*.wxf` inside the data directory, so it generalizes to other symmetry groups without editing the script.
 
 ## Minimal Smoke Test
 
@@ -231,6 +228,8 @@ Options:
 - `--rhs <rhs.wxf>` or `--rhs 0`: RHS path for `--solve-collinear`; `"0"` means an all-zero RHS constructed in-memory. Missing → exit code 1;
 - `--projection <finite|divergent>`: which projection to apply in `--solve-collinear` (default: `divergent`);
 - `--basis <basis.wxf>`: expansion basis file (repeatable; highest weight first). Auto-detected as `first_w{N}_basis.wxf` if omitted;
+- `--data-dir <dir>`: data directory with seed files (default: `<exec_dir>/data`). Used by `--project`, `--solve-symmetry`, `--solve-collinear`; ignored by `--extend` / `--sew` (which use explicit `-c`/`-f`/`-l`/`-o` paths);
+- `--output-dir <dir>`: output directory (default: `<exec_dir>/output`). Same scope as `--data-dir`;
 - `-c/--condition`: condition tensor, currently `data/dlogmat_E6.wxf`;
 - `-f/--first`, `-l/--last`, `-o/--output`: input/output file paths;
 - `-h/--help`: print usage.
@@ -255,10 +254,17 @@ Options:
 ### Inspection (`./inspect_tensors`)
 
 ```bash
-./inspect_tensors   # no flags; reads from ./output/oneloop/E1.wxf and ./output/2loop/boundary_2L.wxf
+./inspect_tensors                                  # default: reads from ./output/
+./inspect_tensors --output-dir output_E7           # multi-project
 ```
 
-Note: `inspect_tensors` reads from the current working directory (not the executable directory), so it must be run from the repository root.
+Options:
+
+- `--output-dir <dir>`: output directory (default: `<exec_dir>/output`);
+- `--data-dir <dir>`: accepted for symmetry with the other tools (not used by `inspect_tensors`);
+- `-h/--help`: print usage.
+
+Reads `<output-dir>/oneloop/E1.wxf` and `<output-dir>/2loop/boundary_2L.wxf`.
 
 ## Tensor Files
 
@@ -284,7 +290,7 @@ Generated files (under `output/`):
 - `output/{L}loop/` (digit prefix — `2loop`, `3loop`, `4loop`, `5loop`): per-loop results from `compute_rhs` — `solMHV_LL.wxf`, `hepMHV_LL.wxf`, `E_LL.wxf`, `R_LL.wxf`, `boundary_LL.wxf`;
 - `logs/*.log`: stdout/stderr logs for each workflow step.
 
-`output/`, `logs/`, the compiled `bootstrap` / `compute_rhs` / `inspect_tensors` executables, `temp/`, and `tmp/` are ignored by git.
+`output/`, `output_*/`, `logs/`, the compiled `bootstrap` / `compute_rhs` / `inspect_tensors` executables, `temp/`, and `tmp/` are ignored by git.
 
 ## Skills and Changelog
 

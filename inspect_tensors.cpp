@@ -1,4 +1,8 @@
 // inspect_tensors.cpp — Inspect E1, compute E1^2/2, verify boundary
+//
+// Usage: ./inspect_tensors [--data-dir <dir>] [--output-dir <dir>]
+// Reads <output-dir>/oneloop/E1.wxf and <output-dir>/2loop/boundary_2L.wxf.
+// Defaults: --output-dir ./output (resolved against the executable directory).
 #include "bootstrap.hpp"
 #include "projection.hpp"
 #include "tensor_shuffle.h"
@@ -9,7 +13,27 @@
 using index_t = int32_t;
 using scalar_t = rat_t;
 
-int main() {
+int main(int argc, char* argv[]) {
+	std::filesystem::path output_dir;
+	std::filesystem::path base = std::filesystem::path(argv[0]).parent_path();
+	if (base.empty()) base = std::filesystem::current_path();
+
+	for (int i = 1; i < argc; i++) {
+		std::string arg = argv[i];
+		if (arg == "--output-dir" && i + 1 < argc) {
+			output_dir = argv[++i];
+		}
+		else if (arg == "--data-dir" && i + 1 < argc) {
+			++i;  // accepted for symmetry with the other tools; not used here
+		}
+		else if (arg == "-h" || arg == "--help") {
+			std::cerr << "Usage: " << argv[0] << " [--data-dir <dir>] [--output-dir <dir>]\n";
+			return 0;
+		}
+	}
+	if (output_dir.empty()) output_dir = base / "output";
+	if (!output_dir.is_absolute()) output_dir = base / output_dir;
+
 	field_t F(FIELD_QQ);
 	rref_option_t opt;
 	opt->method = 0;
@@ -18,7 +42,8 @@ int main() {
 	thread_pool* pool = &(opt->pool);
 
 	// Read E1
-	auto E1_csr = projection_read_tensor<scalar_t, index_t>("./output/oneloop/E1.wxf", F, pool);
+	auto e1_path = output_dir / "oneloop" / "E1.wxf";
+	auto E1_csr = projection_read_tensor<scalar_t, index_t>(e1_path, F, pool);
 	sparse_tensor<scalar_t, index_t, SPARSE_COO> E1(std::move(E1_csr));
 	std::cout << "=== E1 (rank=" << E1.rank() << ", nnz=" << E1.nnz() << ") ===" << std::endl;
 	for (size_t i = 0; i < E1.nnz(); i++) {
@@ -51,7 +76,8 @@ int main() {
 	}
 
 	// Read the boundary file and compare
-	auto bfile_csr = projection_read_tensor<scalar_t, index_t>("./output/2loop/boundary_2L.wxf", F, pool);
+	auto bfile_path = output_dir / "2loop" / "boundary_2L.wxf";
+	auto bfile_csr = projection_read_tensor<scalar_t, index_t>(bfile_path, F, pool);
 	sparse_tensor<scalar_t, index_t, SPARSE_COO> bfile(std::move(bfile_csr));
 	std::cout << "\n=== boundary file (nnz=" << bfile.nnz() << ") ===" << std::endl;
 

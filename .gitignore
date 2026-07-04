@@ -63,6 +63,7 @@ vcpkg_installed/
 Testing/
 .cache/
 output/
+output_*/
 logs/
 temp/
 tmp/

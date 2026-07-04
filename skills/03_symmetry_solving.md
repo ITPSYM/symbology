@@ -52,8 +52,11 @@ the symmetry-invariant subspace.
 
 ## Key files
 
-- `solve_symmetry.hpp` — `run_symmetry_solver(base_path, target, sym, ...)`.
+- `solve_symmetry.hpp` — `run_symmetry_solver(symmetry, target, data_dir, output_dir, F, opt)`.
+  Forwards `data_dir` / `output_dir` to `run_projection_pipeline` when the
+  projection file is missing.
 - `run_solve.sh` — driver script that loops over `cyclic flip parity`.
+  Honors `PROJECT=<name>` (uses `data_<name>/` + `output_<name>/`).
 
 ## Conventions
 
@@ -63,8 +66,9 @@ the symmetry-invariant subspace.
 - **Auto-invocation**: if the projection file is missing, the solver
   transparently runs `--project` to generate it. The user does not need
   to run `--project` separately.
-- **Path resolution**: `base_path/"output"/sym.name`. No path override
-  flags (yet).
+- **Path resolution**: `output_dir/sym.name`. Override via `--data-dir` /
+  `--output-dir` on `bootstrap --solve-symmetry` (resolved against the
+  executable directory).
 
 ## Smoke test
 

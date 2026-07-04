@@ -3,6 +3,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Multi-project support: set PROJECT=<name> (e.g. PROJECT=E7) to use
+# data_<name>/ and output_<name>/ instead of the default data/ and output/.
+if [[ -n "${PROJECT:-}" ]]; then
+  DATA_DIR="data_${PROJECT}"
+  OUTPUT_DIR="output_${PROJECT}"
+else
+  DATA_DIR="data"
+  OUTPUT_DIR="output"
+fi
+
 # Build with Homebrew GCC on macOS (libc++ cannot handle std::execution::par
 # and std::chrono::zoned_time used by the project).
 if [[ -x "/opt/homebrew/bin/g++-14" ]]; then
@@ -19,16 +29,19 @@ if [[ -x "./bootstrap.exe" ]]; then
 fi
 
 TARGET="${1:-SEW_5p1}"
-mkdir -p output logs
+mkdir -p "${OUTPUT_DIR}" logs
 
 # Run all four symmetries, each with its own log file.
 for SYMMETRY in collinear cyclic flip parity; do
   LOG="logs/project_${SYMMETRY}_${TARGET}.log"
   echo "==> ${SYMMETRY} (${LOG})"
-  "$BOOTSTRAP" --project --symmetry "$SYMMETRY" --target "$TARGET" 2>&1 | tee "$LOG"
+  "$BOOTSTRAP" --project --symmetry "$SYMMETRY" --target "$TARGET" \
+    --data-dir "$DATA_DIR" --output-dir "$OUTPUT_DIR" 2>&1 | tee "$LOG"
 done
 
 echo ""
 echo "=== All projections complete ==="
+echo "Data dir:   ${DATA_DIR}"
+echo "Output dir: ${OUTPUT_DIR}"
 echo "Logs:       logs/project_*_${TARGET}.log"
-echo "Summaries:  output/<symmetry>/summary.txt"
+echo "Summaries:  ${OUTPUT_DIR}/<symmetry>/summary.txt"

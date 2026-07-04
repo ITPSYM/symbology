@@ -101,15 +101,15 @@ first run, and triggers writes to `output/collinear/` via `--project`.
 
 ## Conventions
 
-- **`--data-dir` / `--output-dir` are exposed** (unlike `bootstrap`'s
-  `--project` / `--solve-*` modes). Default to `<exec_dir>/data` and
-  `<exec_dir>/output`.
+- **`--data-dir` / `--output-dir`**: default to `<exec_dir>/data` and
+  `<exec_dir>/output`. Relative paths resolve against the executable
+  directory (same convention as `bootstrap`).
 - **Subprocess invocation**: `compute_rhs` shells out to `./bootstrap
-  --extend`, `--sew`, `--project` to generate missing prerequisites.
-  **Caveat**: it does NOT currently propagate `--data-dir` /
-  `--output-dir` to these subprocesses — they will use their own defaults
-  (`<exec_dir>/data`, `<exec_dir>/output`). This is a known limitation
-  for the multi-project layout; see `README.md` §"Multi-Project Layout".
+  --extend`, `--sew`, `--project` to generate missing prerequisites. It
+  appends `--data-dir <abs>` / `--output-dir <abs>` (absolute paths) to
+  every subprocess so the same project directories are used end to end.
+  `find_dlogmat(data_dir)` scans for `dlogmat_*.wxf` instead of
+  hardcoding `dlogmat_E6.wxf`.
 - **Sequential shuffle product**: always pass `pool = nullptr` to
   `tensor_shuffle_product_parallel` for boundary computation. The
   parallel variant produces incorrect results.

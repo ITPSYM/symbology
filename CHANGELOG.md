@@ -3,6 +3,62 @@
 All notable changes to this repository are documented here. Dates use
 ISO 8601 (YYYY-MM-DD) and the local timezone is Asia/Shanghai.
 
+## [2026-07-04] Multi-project path support (--data-dir / --output-dir)
+
+### Summary
+Threaded `--data-dir` / `--output-dir` through every pipeline mode so a
+single checkout can serve multiple bootstrap projects (e.g. `E6`, `E7`,
+`D5`) without editing source files. Each project lives in its own
+`data_<PROJECT>/` + `output_<PROJECT>/` pair; the default (`data/` +
+`output/`) remains backward compatible.
+
+### Modified
+- **`bootstrap.cpp`** — added `--data-dir` / `--output-dir` parsing and
+  dispatch for `--project`, `--solve-symmetry`, `--solve-collinear`.
+  Relative paths are resolved against the executable directory (same
+  convention as `--condition` / `--first` / `--last` / `--output`).
+  `--extend` / `--sew` ignore the flags (they use explicit `-c`/`-f`/`-l`/`-o`).
+- **`projection.hpp`** — `run_projection_pipeline` signature changed from
+  `base_path` to `data_dir` + `output_dir`; removed the internal
+  `base / "data"` / `base / "output"` resolution.
+- **`solve_symmetry.hpp`** — `run_symmetry_solver` signature changed from
+  `base_path` to `data_dir` + `output_dir`; forwards both to
+  `run_projection_pipeline`.
+- **`compute_rhs.hpp`** — added `find_dlogmat(data_dir)` helper that scans
+  for `dlogmat_*.wxf` instead of hardcoding `dlogmat_E6.wxf`; added a
+  project-aware `run_bootstrap_cmd(cmd, data_dir, output_dir)` overload
+  that appends `--data-dir <abs>` / `--output-dir <abs>` to every subprocess
+  invocation so `--extend` / `--sew` / `--project` auto-invocations use the
+  same project directories.
+- **`compute_rhs.cpp`** — relative `--data-dir` / `--output-dir` now
+  resolve against the executable directory (matching `bootstrap.cpp` and
+  `inspect_tensors.cpp`); previously they were left relative to cwd.
+- **`inspect_tensors.cpp`** — added `--output-dir` (and `--data-dir` for
+  symmetry); `main` now takes `argc`/`argv` and resolves paths against the
+  executable directory.
+- **`run_workflow.sh`** — parameterized with `PROJECT` env var
+  (`data_<PROJECT>/` + `output_<PROJECT>/`); auto-detects
+  `dlogmat_*.wxf` in the data dir instead of hardcoding `dlogmat_E6.wxf`.
+- **`run_projection.sh`**, **`run_solve.sh`** — parameterized with
+  `PROJECT` env var; pass `--data-dir` / `--output-dir` to `bootstrap`.
+- **`solve_collinear.hpp`** — fixed a misleading log message that printed
+  `colprojdiv_SEW_SEW_3p1.wxf` (the actual file is `colprojdiv_SEW_3p1.wxf`
+  because `sew_name` already includes the `SEW_` prefix).
+- **`.gitignore`** — added `output_*/` to cover multi-project output dirs.
+- **`README.md`** — removed the "Current limitation" caveat; documented
+  the now-functional multi-project layout, the `PROJECT` env var, and the
+  `--data-dir` / `--output-dir` flags for all three executables.
+
+### Verified
+- Default paths (`./compute_rhs --target SEW_3p1`): L=2 solve succeeds,
+  `c[0] = 8`, all 8 constraints verified, `R2` divergent-free.
+- Custom paths (`cp -r data data_test && ./compute_rhs --target SEW_3p1
+  --data-dir data_test --output-dir output_test`): full pipeline runs
+  end to end (subprocess `--extend` / `--sew` / `--project` all receive
+  absolute `--data-dir` / `--output-dir`); produces byte-identical
+  outputs (CRC32 match for `SEW_3p1_basis.wxf`, `E2.wxf`, `R2.wxf`,
+  `boundary_2L.wxf`, `hepMHV_2L.wxf`).
+
 ## [2026-07-04] Standalone RHS computation module and divergent-subspace solve
 
 ### Added

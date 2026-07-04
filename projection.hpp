@@ -489,7 +489,8 @@ template <typename T, typename index_t>
 void run_projection_pipeline(
 	const std::string& symmetry_name,
 	const std::string& target_name,
-	const std::filesystem::path& base_path,
+	const std::filesystem::path& data_dir,
+	const std::filesystem::path& output_dir,
 	const field_t& F,
 	rref_option_t& opt) {
 
@@ -506,10 +507,10 @@ void run_projection_pipeline(
 	              target.kind == target_kind_t::FEC ? "FEC" : "LEC")
 	          << ", FEC weight=" << target.fec_weight
 	          << ", LEC weight=" << target.lec_weight << ")" << std::endl;
+	std::cout << "  Data dir:   " << data_dir.string() << std::endl;
+	std::cout << "  Output dir: " << output_dir.string() << std::endl;
 	std::cout << "========================================" << std::endl;
 
-	std::filesystem::path data_dir = base_path / "data";
-	std::filesystem::path output_dir = base_path / "output";
 	std::filesystem::path sym_dir = output_dir / sym.name;
 	std::filesystem::create_directories(sym_dir);
 
