@@ -117,7 +117,7 @@ The default (no tag) is `data/` + `output/`, which is backward compatible.
 ### Conventions
 
 - Inside `data_<PROJECT>/`, the seed files keep the same **roles** as in `data/` (see `data/DESCRIPTION.md`), but encode the symmetry group in the filename where it matters: `dlogmat_<group>.wxf` (e.g. `dlogmat_E7.wxf`), `FEC_1.wxf`, `LEC_1.wxf`, `colmat<N>.wxf` (where `<N>` is the FEC weight-1 dimension — `42` for `E6`), `colprojdiv.wxf`, `colprojfin.wxf`, `<group>repmat_*.wxf`, `E1.wxf`.
-- All executables accept `--data-dir <dir>` and `--output-dir <dir>`. Relative paths are resolved against the executable directory. The flags are threaded through every pipeline mode: `bootstrap --project` / `--solve-symmetry` / `--solve-collinear`, `compute_rhs`, and `inspect_tensors`. When `compute_rhs` shells out to `./bootstrap --extend` / `--sew` / `--project` to generate missing prerequisites, it passes the absolute `--data-dir` / `--output-dir` to the subprocess so the same project directories are used end to end.
+- All executables accept `--data-dir <dir>` and `--output-dir <dir>`. Relative paths are resolved against the executable directory. The flags are threaded through every pipeline mode: `bootstrap --project` / `--solve-symmetry` / `--solve-collinear`, `compute_rhs`, and `inspect_tensors`. When `compute_rhs` shells out to `./bootstrap --extend` / `--sew` / `--project` (to generate missing prerequisites) and `./bootstrap --solve-collinear` (to solve the collinear constraint at each loop order), it passes the absolute `--data-dir` / `--output-dir` to the subprocess so the same project directories are used end to end.
 - The driver scripts (`run_workflow.sh`, `run_projection.sh`, `run_solve.sh`) honor a `PROJECT=<name>` environment variable: setting `PROJECT=E7` makes them use `data_E7/` + `output_E7/`. With `PROJECT` unset they default to `data/` + `output/` (backward compatible).
 - `run_workflow.sh` auto-detects the condition tensor as `dlogmat_*.wxf` inside the data directory, so it generalizes to other symmetry groups without editing the script.
 
@@ -211,8 +211,8 @@ Symmetry invariant subspace solver:
 Collinear constraint solver:
 
 ```bash
-./bootstrap --solve-collinear --target SEW_5p1 --rhs output/3loop/boundary_3L.wxf
-./bootstrap --solve-collinear --target SEW_3p1 --rhs 0   # empty RHS
+./bootstrap --solve-collinear --target SEW_5p1 --rhs output/3loop/boundary_3L.wxf --projection divergent
+./bootstrap --solve-collinear --target SEW_3p1 --rhs 0 --projection divergent   # empty RHS
 ```
 
 Options:

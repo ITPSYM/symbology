@@ -5,8 +5,10 @@
 Recursively compute the collinear boundary `E[L]`, the remainder `R[L]`,
 and the boundary tensor `boundary_LL` from loop 2 up to a target loop
 order `L`. This is a standalone executable that **couples with** the main
-`bootstrap` module: it invokes `./bootstrap --extend`, `--sew`, and
-`--project` as needed to generate missing SEW basis files.
+`bootstrap` module: it invokes `./bootstrap --extend`, `--sew`,
+`--project` (to generate missing SEW basis files) and
+`--solve-collinear` (to solve the collinear constraint at each loop
+order).
 
 The boundary at loop `L` is computed from the lower-loop results:
 
