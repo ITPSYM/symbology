@@ -13,6 +13,7 @@ working on a module.
 
 | File | Module | Entry point |
 |------|--------|-------------|
+| [00_dlogmat.md](00_dlogmat.md) | Alphabet → dlogmat + FEC/LEC seeds (Mathematica) | `SymbolBootstrap.wl` |
 | [01_bootstrap.md](01_bootstrap.md) | Core bootstrap (extension + sewing) | `./bootstrap --extend` / `--sew` |
 | [02_projection.md](02_projection.md) | Universal projection matrix module | `./bootstrap --project` |
 | [03_symmetry_solving.md](03_symmetry_solving.md) | Symmetry invariant subspace solver | `./bootstrap --solve-symmetry` |
