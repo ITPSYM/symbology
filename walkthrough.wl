@@ -137,3 +137,78 @@ SetLastEntry["E6",{a21,a22,a23,a24,a25,a26,a27,a31,a32,a33,a34,a35,a36,a37}]
 
 
 LEC[1]=GetLastEntryTensor["E6"]
+
+
+(* ::Subsection:: *)
+(*Example: pentagon integrability and letter transformations*)
+
+
+(* ::Subsubsection:: *)
+(*Declare pentagon alphabet with square-root letters*)
+
+
+alphabetPentagon=Table[W[i],{i,31}];
+pentagonDelta=s12^2 s15^2-2s12^2 s15 s23+s12^2 s23^2+2s12 s15 s23 s34-2s12 s23^2 s34+s23^2 s34^2-2s12 s15^2 s45+2s12 s15 s23 s45+2s12 s15 s34 s45+2s12 s23 s34 s45+2s15 s23 s34 s45-2s23 s34^2 s45+s15^2 s45^2-2s15 s34 s45^2+s34^2 s45^2;
+alphabetExprPentagon={s12,s23,s34,s45,s15,s34+s45,s15+s45,s12+s15,s12+s23,s23+s34,s12-s45,-s15+s23,-s12+s34,-s23+s45,s15-s34,s12+s23-s45,-s15+s23+s34,-s12+s34+s45,s15-s23+s45,s12+s15-s34,-s12-s23+s34+s45,s15-s23-s34+s45,s12+s15-s34-s45,s12-s15+s23-s45,-s12-s15+s23+s34,
+(-Sqrt[pentagonDelta]-s12 s15+s12 s23-s23 s34-s15 s45+s34 s45)/(Sqrt[pentagonDelta]-s12 s15+s12 s23-s23 s34-s15 s45+s34 s45),
+(-Sqrt[pentagonDelta]-s12 s15-s12 s23+s23 s34+s15 s45-s34 s45)/(Sqrt[pentagonDelta]-s12 s15-s12 s23+s23 s34+s15 s45-s34 s45),
+(-Sqrt[pentagonDelta]+s12 s15-s12 s23-s23 s34-s15 s45+s34 s45)/(Sqrt[pentagonDelta]+s12 s15-s12 s23-s23 s34-s15 s45+s34 s45),
+(-Sqrt[pentagonDelta]-s12 s15+s12 s23-s23 s34+s15 s45-s34 s45)/(Sqrt[pentagonDelta]-s12 s15+s12 s23-s23 s34+s15 s45-s34 s45),
+(-Sqrt[pentagonDelta]+s12 s15-s12 s23+s23 s34-s15 s45-s34 s45)/(Sqrt[pentagonDelta]+s12 s15-s12 s23+s23 s34-s15 s45-s34 s45),pentagonDelta};
+
+
+DeclareAlphabet["Pentagon",alphabetPentagon]
+
+
+SetAlphabetExpression["Pentagon",alphabetExprPentagon]
+
+
+(* ::Subsubsection:: *)
+(*Get integrability condition tensor*)
+
+
+dlogmatPentagonInt=GetIntegrabilityTensor["Pentagon"]
+
+
+(* Equivalently *)
+dlogmatPentagonInt==GetAlphabetConditionTensor["Pentagon","Integrability"]
+
+
+(* ::Subsubsection:: *)
+(*Cyclic transformation*)
+
+
+cyclicMapPentagon={s12->s23,s23->s34,s34->s45,s45->s15,s15->s12};
+
+
+SetLetterTransformation["Pentagon","Cyclic",cyclicMapPentagon]
+
+
+cycmatPentagon=GetLetterTransformationTensor["Pentagon","Cyclic"]
+
+
+MatrixPower[cycmatPentagon,5]==IdentityMatrix[31,SparseArray]
+
+
+(* Equivalently *)
+cycmatPentagon==GetAlphabetConditionTensor["Pentagon",{"Letter Transformation","Cyclic"}]
+
+
+(* ::Subsubsection:: *)
+(*Flip transformation*)
+
+
+flipMapPentagon={s12->s15,s23->s45,s34->s34,s45->s23,s15->s12};
+
+
+SetLetterTransformation["Pentagon","Flip",flipMapPentagon]
+
+
+flipmatPentagon=GetLetterTransformationTensor["Pentagon","Flip"]
+
+
+MatrixPower[flipmatPentagon,2]==IdentityMatrix[31,SparseArray]
+
+
+(* Equivalently *)
+flipmatPentagon==GetAlphabetConditionTensor["Pentagon",{"Letter Transformation","Flip"}]
